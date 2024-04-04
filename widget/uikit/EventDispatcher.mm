@@ -199,6 +199,12 @@ void EventDispatcher::Detach() {
   Shutdown();
 }
 
+void EventDispatcher::Activate() {
+  if (mDispatcher) {
+    [(id<SwiftEventDispatcher>)mDispatcher activate];
+  }
+}
+
 EventDispatcher::~EventDispatcher() {
   if (mDispatcher) {
     [mDispatcher release];

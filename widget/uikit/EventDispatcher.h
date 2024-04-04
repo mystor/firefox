@@ -24,6 +24,8 @@ class EventDispatcher final : public EventDispatcherBase {
   void Attach(id aDispatcher);
   void Detach();
 
+  void Activate();
+
   bool HasEmbedderListener(const nsAString& aEvent) override;
   void DispatchToEmbedder(const nsAString& aEvent,
                           const GeckoViewDataSource& aData,

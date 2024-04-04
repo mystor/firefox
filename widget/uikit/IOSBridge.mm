@@ -18,6 +18,7 @@ nsIOSBridge::nsIOSBridge() {
   RefPtr<mozilla::widget::EventDispatcher> dispatcher =
       new mozilla::widget::EventDispatcher();
   dispatcher->Attach([GetSwiftRuntime() runtimeDispatcher]);
+  dispatcher->Activate();
   mEventDispatcher = dispatcher;
 }
 
@@ -27,6 +28,7 @@ nsIOSBridge::GetDispatcherByName(const char* aName,
   RefPtr<mozilla::widget::EventDispatcher> dispatcher =
       new mozilla::widget::EventDispatcher();
   dispatcher->Attach([GetSwiftRuntime() dispatcherByName:aName]);
+  dispatcher->Activate();
   dispatcher.forget(aResult);
   return NS_OK;
 }
