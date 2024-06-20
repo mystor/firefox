@@ -210,7 +210,10 @@ extension RootViewController: ContentDelegate {
 
     func onFocusRequest(session: GeckoSession) {}
 
-    func onCloseRequest(session: GeckoSession) {}
+    func onCloseRequest(session: GeckoSession) {
+        session.close()
+        geckoview.session = nil
+    }
 
     func onFullScreen(session: GeckoSession, fullScreen: Bool) {}
 
