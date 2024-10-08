@@ -548,6 +548,16 @@ class MozbuildObject(ProcessExecutionMixin):
         if where == "staged-package":
             stem = os.path.join(stem, substs["MOZ_APP_NAME"])
 
+        # HACK: We don't package the iOS app with mozbuild yet.
+        if substs["TARGET_OS"] == "iOS" and what == "app":
+            return os.path.join(
+                stem,
+                "GeckoTestBrowser.xcarchive",
+                "Products",
+                "Applications",
+                "GeckoTestBrowser.app",
+            )
+
         if substs["OS_ARCH"] == "Darwin" and "MOZ_MACBUNDLE_NAME" in substs:
             stem = os.path.join(stem, substs["MOZ_MACBUNDLE_NAME"], "Contents", "MacOS")
         elif where == "default":
@@ -997,6 +1007,20 @@ class MachCommandConditions:
         """Must not have an Android build."""
         if hasattr(cls, "substs"):
             return cls.substs.get("MOZ_WIDGET_TOOLKIT") != "android"
+        return False
+
+    @staticmethod
+    def is_ios(cls):
+        """Must have an iOS build."""
+        if hasattr(cls, "substs"):
+            return cls.substs.get("TARGET_OS") == "iOS"
+        return False
+
+    @staticmethod
+    def is_ios_simulator(cls):
+        """Must have an iOS simulator build."""
+        if hasattr(cls, "substs"):
+            return cls.substs.get("IPHONEOS_IS_SIMULATOR", False)
         return False
 
     @staticmethod
