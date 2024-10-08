@@ -551,6 +551,16 @@ class MozbuildObject(ProcessExecutionMixin):
         if where == "staged-package":
             stem = os.path.join(stem, substs["MOZ_APP_NAME"])
 
+        # HACK: We don't package the iOS app with mozbuild yet.
+        if substs["TARGET_OS"] == "iOS" and what == "app":
+            return os.path.join(
+                stem,
+                "ExampleBrowser.xcarchive",
+                "Products",
+                "Applications",
+                "ExampleBrowser.app",
+            )
+
         if substs["OS_ARCH"] == "Darwin" and "MOZ_MACBUNDLE_NAME" in substs:
             stem = os.path.join(stem, substs["MOZ_MACBUNDLE_NAME"], "Contents", "MacOS")
         elif where == "default":
