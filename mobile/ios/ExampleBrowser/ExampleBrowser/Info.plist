@@ -8,7 +8,6 @@
 		<false/>
 		<key>UIRequiredDeviceCapabilities</key>
 		<array>
-			<string>arm64e</string>
 			<string>web-browser-engine</string>
 		</array>
 		<key>UISceneConfigurations</key>
