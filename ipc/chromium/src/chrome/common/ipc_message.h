@@ -19,6 +19,11 @@
 #include "mozilla/ipc/ScopedPort.h"
 #include "nsTArray.h"
 
+#ifdef XP_IOS
+#  include <xpc/xpc.h>
+#  include "mozilla/DarwinObjectPtr.h"
+#endif
+
 namespace mozilla {
 
 #ifdef FUZZING_SNAPSHOT
@@ -307,7 +312,7 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
   // IPC::Message.
   void SetAttachedFileHandles(nsTArray<mozilla::UniqueFileHandle> handles);
 
-#if defined(XP_DARWIN)
+#if defined(XP_MACOSX)
   void set_fd_cookie(uint32_t cookie) { header()->cookie = cookie; }
   uint32_t fd_cookie() const { return header()->cookie; }
 #endif
@@ -335,12 +340,22 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
                             mozilla::UniqueMachSendRight* port) const;
 
   uint32_t num_send_rights() const;
+
+#  if defined(XP_IOS)
+  bool WriteXPCObject(mozilla::DarwinObjectPtr<xpc_object_t> object);
+
+  bool ReadXPCObject(PickleIterator* iter,
+                     mozilla::DarwinObjectPtr<xpc_object_t>* object) const;
+
+  uint32_t num_xpc_objects() const;
+#  endif
 #endif
 
   uint32_t num_relayed_attachments() const {
 #if defined(XP_WIN)
     return num_handles();
-#elif defined(XP_DARWIN)
+#elif defined(XP_MACOSX)
+    // NOTE: iOS does not relay send rights.
     return num_send_rights();
 #else
     return 0;
@@ -373,7 +388,7 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
     msgid_t type;          // specifies the user-defined message type
     HeaderFlags flags;     // specifies control flags for the message
     uint32_t num_handles;  // the number of handles included with this message
-#if defined(XP_DARWIN)
+#if defined(XP_MACOSX)
     uint32_t cookie;  // cookie to ACK that the descriptors have been read.
     uint32_t num_send_rights;  // the number of mach send rights included with
                                // this message
@@ -407,6 +422,14 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
   // Mutable, as this array can be mutated during `ConsumeMachSendRight` when
   // deserializing a message.
   mutable nsTArray<mozilla::UniqueMachSendRight> attached_send_rights_;
+
+#  if defined(XP_IOS)
+  // The set of xpc objects which are attached to this message.
+  //
+  // Unlike other attachments, this doesn't need to be mutable, as all xpc
+  // objects are reference counted.
+  nsTArray<mozilla::DarwinObjectPtr<xpc_object_t>> attached_xpc_objects_;
+#  endif
 #endif
 
   // Total size of buffers which should have been sent in shared memory, but had

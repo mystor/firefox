@@ -22,7 +22,7 @@
 #if defined(XP_DARWIN)
 #  include "base/message_pump_mac.h"
 #endif
-#if defined(XP_UNIX)
+#if defined(XP_UNIX) && !defined(XP_IOS)
 #  include "base/message_pump_libevent.h"
 #endif
 #if defined(XP_LINUX) || defined(__DragonFly__) || defined(XP_FREEBSD) || \
@@ -283,8 +283,10 @@ MessageLoop::MessageLoop(Type type, nsISerialEventTarget* aEventTarget)
       defined(XP_NETBSD) || defined(XP_OPENBSD)
     pump_ = new base::MessagePumpForUI();
 #  endif  // XP_LINUX
+#  if !defined(XP_IOS)
   } else if (type_ == TYPE_IO) {
     pump_ = new base::MessagePumpLibevent();
+#  endif
   } else {
     pump_ = new base::MessagePumpDefault();
   }
@@ -706,7 +708,7 @@ bool MessageLoopForIO::WaitForIOCompletion(DWORD timeout, IOHandler* filter) {
   return pump_io()->WaitForIOCompletion(timeout, filter);
 }
 
-#else
+#elif !defined(XP_IOS)
 
 bool MessageLoopForIO::WatchFileDescriptor(int fd, bool persistent, Mode mode,
                                            FileDescriptorWatcher* controller,

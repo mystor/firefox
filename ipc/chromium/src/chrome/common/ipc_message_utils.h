@@ -122,6 +122,12 @@ class MOZ_STACK_CLASS MessageWriter final {
   bool WriteMachSendRight(mozilla::UniqueMachSendRight port) {
     return message_.WriteMachSendRight(std::move(port));
   }
+
+#  if defined(XP_IOS)
+  bool WriteXPCObject(mozilla::DarwinObjectPtr<xpc_object_t> object) {
+    return message_.WriteXPCObject(std::move(object));
+  }
+#  endif
 #endif
 
   void FatalError(const char* aErrorMsg) const {
@@ -216,6 +222,13 @@ class MOZ_STACK_CLASS MessageReader final {
   [[nodiscard]] bool ConsumeMachSendRight(mozilla::UniqueMachSendRight* port) {
     return message_.ConsumeMachSendRight(&iter_, port);
   }
+
+#  if defined(XP_IOS)
+  [[nodiscard]] bool ReadXPCObject(
+      mozilla::DarwinObjectPtr<xpc_object_t>* object) {
+    return message_.ReadXPCObject(&iter_, object);
+  }
+#  endif
 #endif
 
   void FatalError(const char* aErrorMsg) const {
@@ -1058,6 +1071,41 @@ struct ParamTraitsIPC<mozilla::UniqueMachSendRight> {
     return true;
   }
 };
+
+#  if defined(XP_IOS)
+template <>
+struct ParamTraitsIPC<mozilla::DarwinObjectPtr<xpc_object_t>> {
+  typedef mozilla::DarwinObjectPtr<xpc_object_t> param_type;
+  static void Write(MessageWriter* writer, param_type&& p) {
+    const bool valid = !!p;
+    WriteParam(writer, valid);
+    if (valid) {
+      if (!writer->WriteXPCObject(std::move(p))) {
+        writer->FatalError("Too many XPC objects for one message!");
+        NOTREACHED() << "Too many XPC objects for one message!";
+      }
+    }
+  }
+  static bool Read(MessageReader* reader, param_type* r) {
+    bool valid;
+    if (!ReadParam(reader, &valid)) {
+      reader->FatalError("Error reading XPC object validity");
+      return false;
+    }
+
+    if (!valid) {
+      *r = nullptr;
+      return true;
+    }
+
+    if (!reader->ReadXPCObject(r)) {
+      reader->FatalError("XPC object not found in message!");
+      return false;
+    }
+    return true;
+  }
+};
+#  endif
 #endif
 
 // Mozilla-specific types.

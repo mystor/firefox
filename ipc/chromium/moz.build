@@ -61,13 +61,11 @@ if CONFIG["TARGET_KERNEL"] != "WINNT":
     UNIFIED_SOURCES += [
         "src/base/condition_variable_posix.cc",
         "src/base/lock_impl_posix.cc",
-        "src/base/message_pump_libevent.cc",
         "src/base/platform_thread_posix.cc",
         "src/base/process_util_posix.cc",
         "src/base/string16.cc",
         "src/base/thread_local_posix.cc",
         "src/base/waitable_event_posix.cc",
-        "src/chrome/common/ipc_channel_posix.cc",
     ]
 
     if CONFIG["TARGET_OS"] in ("Android", "iOS"):
@@ -77,6 +75,19 @@ if CONFIG["TARGET_KERNEL"] != "WINNT":
     else:
         UNIFIED_SOURCES += [
             "src/chrome/common/process_watcher_posix_sigchld.cc",
+        ]
+
+    # Apple blocks the SYS_kevent and SYS_kevent64 syscalls in content
+    # processes, and the unblocked `SYS_kevent_qol` API is private, so we cannot
+    # use libevent in iOS content processes.
+    if CONFIG["TARGET_OS"] == "iOS":
+        UNIFIED_SOURCES += [
+            "src/chrome/common/ipc_channel_xpc.cc",
+        ]
+    else:
+        UNIFIED_SOURCES += [
+            "src/base/message_pump_libevent.cc",
+            "src/chrome/common/ipc_channel_posix.cc",
         ]
 
 if CONFIG["TARGET_KERNEL"] == "Darwin":

@@ -262,7 +262,12 @@ static CommandLineArg<const char*> sGREOmni{"-greomni", "greomni"};
 static CommandLineArg<const char*> sAppOmni{"-appomni", "appomni"};
 static CommandLineArg<const char*> sProfile{"-profile", "profile"};
 
+#ifdef XP_IOS
+static CommandLineArg<DarwinObjectPtr<xpc_object_t>> sIPCHandle{"-ipcHandle",
+                                                                "ipchandle"};
+#else
 static CommandLineArg<UniqueFileHandle> sIPCHandle{"-ipcHandle", "ipchandle"};
+#endif
 
 static CommandLineArg<mozilla::ipc::ReadOnlySharedMemoryHandle> sJsInitHandle{
     "-jsInitHandle", "jsinithandle"};

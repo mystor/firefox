@@ -32,7 +32,7 @@ Message::Message(int32_t routing_id, msgid_t type, uint32_t segment_capacity,
   header()->num_handles = 0;
   header()->txid = -1;
   header()->seqno = 0;
-#if defined(XP_DARWIN)
+#if defined(XP_MACOSX)
   header()->cookie = 0;
   header()->num_send_rights = 0;
 #endif
@@ -186,6 +186,36 @@ bool Message::ConsumeMachSendRight(PickleIterator* iter,
 uint32_t Message::num_send_rights() const {
   return attached_send_rights_.Length();
 }
+
+#  if defined(XP_IOS)
+bool Message::WriteXPCObject(mozilla::DarwinObjectPtr<xpc_object_t> object) {
+  uint32_t index = attached_xpc_objects_.Length();
+  WriteUInt32(index);
+  if (index == MAX_DESCRIPTORS_PER_MESSAGE) {
+    return false;
+  }
+  attached_xpc_objects_.AppendElement(std::move(object));
+  return true;
+}
+
+bool Message::ReadXPCObject(
+    PickleIterator* iter,
+    mozilla::DarwinObjectPtr<xpc_object_t>* object) const {
+  uint32_t index;
+  if (!ReadUInt32(iter, &index)) {
+    return false;
+  }
+  if (index >= attached_xpc_objects_.Length()) {
+    return false;
+  }
+  *object = attached_xpc_objects_[index];
+  return true;
+}
+
+uint32_t Message::num_xpc_objects() const {
+  return attached_xpc_objects_.Length();
+}
+#  endif
 #endif
 
 bool Message::WillBeRoutedExternally(

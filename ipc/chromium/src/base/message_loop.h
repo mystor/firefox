@@ -15,6 +15,7 @@
 
 #include "base/message_pump.h"
 #include "base/observer_list.h"
+#include "base/time.h"
 
 #include "mozilla/Mutex.h"
 
@@ -22,7 +23,7 @@
 // We need this to declare base::MessagePumpWin::Dispatcher, which we should
 // really just eliminate.
 #  include "base/message_pump_win.h"
-#else
+#elif !defined(XP_IOS)
 #  include "base/message_pump_libevent.h"
 #endif
 
@@ -329,7 +330,7 @@ class MessageLoop : public base::MessagePump::Delegate {
   base::MessagePumpWin* pump_win() {
     return static_cast<base::MessagePumpWin*>(pump_.get());
   }
-#else
+#elif !defined(XP_IOS)
   base::MessagePumpLibevent* pump_libevent() {
     return static_cast<base::MessagePumpLibevent*>(pump_.get());
   }
@@ -527,7 +528,7 @@ class MessageLoopForIO : public MessageLoop {
     return static_cast<base::MessagePumpForIO*>(pump_.get());
   }
 
-#else
+#elif !defined(XP_IOS)
   typedef base::MessagePumpLibevent::Watcher Watcher;
   typedef base::MessagePumpLibevent::FileDescriptorWatcher
       FileDescriptorWatcher;
