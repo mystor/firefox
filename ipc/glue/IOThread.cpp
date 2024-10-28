@@ -93,7 +93,7 @@ void IOThreadChild::Init() {
       std::move(mClientHandle), IPC::Channel::MODE_CLIENT, mParentPid);
 #if defined(XP_WIN)
   channel->StartAcceptingHandles(IPC::Channel::MODE_CLIENT);
-#elif defined(XP_DARWIN)
+#elif defined(XP_MACOSX)
   channel->StartAcceptingMachPorts(IPC::Channel::MODE_CLIENT);
 #endif
 

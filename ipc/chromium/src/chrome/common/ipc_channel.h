@@ -127,7 +127,7 @@ class Channel {
   // be out of date.
   bool IsClosed() const;
 
-#if defined(XP_DARWIN)
+#if defined(XP_MACOSX)
   // Configure the mach task_t for the peer task.
   void SetOtherMachTask(task_t task);
 
