@@ -1453,6 +1453,16 @@ RefPtr<ProcessHandlePromise> IosProcessLauncher::DoLaunch() {
   xpc_dictionary_set_value(bootstrapMessage.get(), "sendRights",
                            sendRightsArray.get());
 
+  DarwinObjectPtr<xpc_object_t> objectsArray =
+      AdoptDarwinObject(xpc_array_create_empty());
+  for (auto& xpcObject : mChildArgs.mXPCObjects) {
+    xpc_array_set_value(objectsArray.get(), XPC_ARRAY_APPEND, xpcObject.get());
+  }
+  MOZ_ASSERT(xpc_array_get_count(objectsArray.get()) ==
+             mChildArgs.mXPCObjects.size());
+  xpc_dictionary_set_value(bootstrapMessage.get(), "objects",
+                           objectsArray.get());
+
   auto promise = MakeRefPtr<ProcessHandlePromise::Private>(__func__);
   ExtensionKitProcess::StartProcess(kind, [self = RefPtr{this}, promise,
                                            bootstrapMessage =
@@ -1477,7 +1487,10 @@ RefPtr<ProcessHandlePromise> IosProcessLauncher::DoLaunch() {
     xpc_connection_set_event_handler(self->mResults.mXPCConnection.get(), ^(
                                          xpc_object_t event) {
       if (!event || xpc_get_type(event) == XPC_TYPE_ERROR) {
-        CHROMIUM_LOG(WARNING) << "XPC connection received encountered an error";
+        const char* description =
+            xpc_dictionary_get_string(event, XPC_ERROR_KEY_DESCRIPTION);
+        CHROMIUM_LOG(WARNING)
+            << "XPC connection received an error" << description;
         promise->Reject(LaunchError("xpc_connection_event_handler"), __func__);
       }
     });
@@ -1492,8 +1505,11 @@ RefPtr<ProcessHandlePromise> IosProcessLauncher::DoLaunch() {
         self->mResults.mXPCConnection.get(), bootstrapMessage.get(), nullptr,
         ^(xpc_object_t reply) {
           if (xpc_get_type(reply) == XPC_TYPE_ERROR) {
+            const char* description =
+                xpc_dictionary_get_string(reply, XPC_ERROR_KEY_DESCRIPTION);
             CHROMIUM_LOG(ERROR)
-                << "Got error sending XPC bootstrap message to child";
+                << "Got error sending XPC bootstrap message to child: "
+                << description;
             promise->Reject(
                 LaunchError("xpc_connection_send_message_with_reply error"),
                 __func__);

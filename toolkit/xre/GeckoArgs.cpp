@@ -96,6 +96,11 @@ static Maybe<uint32_t> SerializeHandleArgument(UniqueFileHandle&& aValue,
   return Nothing();
 }
 
+#ifdef XP_IOS
+// Table of xpc_object_t which have been sent by the parent process.
+xpc_object_t gXPCObjects[10] = {nullptr};
+#endif
+
 template <>
 Maybe<UniqueFileHandle> CommandLineArg<UniqueFileHandle>::GetCommon(
     const char* aMatch, int& aArgc, char** aArgv, const CheckArgFlag aFlags) {

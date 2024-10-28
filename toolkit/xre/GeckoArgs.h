@@ -18,6 +18,11 @@
 #include <string_view>
 #include <vector>
 
+#ifdef XP_IOS
+#  include <xpc/xpc.h>
+#  include "mozilla/DarwinObjectPtr.h"
+#endif
+
 namespace mozilla {
 
 namespace geckoargs {
@@ -28,6 +33,9 @@ struct ChildProcessArgs {
   std::vector<UniqueFileHandle> mFiles;
 #ifdef XP_DARWIN
   std::vector<UniqueMachSendRight> mSendRights;
+#endif
+#ifdef XP_IOS
+  std::vector<DarwinObjectPtr<xpc_object_t>> mXPCObjects;
 #endif
 };
 
@@ -50,6 +58,21 @@ constexpr size_t kMaxPassedMachSendRights = 10;
 // Fill the internal static array with the mach send rights which were passed
 // from the parent process.
 void SetPassedMachSendRights(std::vector<UniqueMachSendRight>&& aSendRights);
+#endif
+
+#ifdef XP_IOS
+extern xpc_object_t gXPCObjects[10];
+
+// HACK: xpc_object_t has a different type depending on if we're building for
+// C++ or Objective-C++, which screws up symbol names, so the implementaiton of
+// `SetPassedXPCObjects` is declared inline to avoid that issue.
+inline void SetPassedXPCObjects(
+    std::vector<DarwinObjectPtr<xpc_object_t>>&& aXPCObjects) {
+  MOZ_RELEASE_ASSERT(aXPCObjects.size() <= std::size(gXPCObjects));
+  for (size_t i = 0; i < aXPCObjects.size(); ++i) {
+    gXPCObjects[i] = aXPCObjects[i].forget();
+  }
+}
 #endif
 
 template <typename T>
@@ -143,6 +166,22 @@ Maybe<mozilla::ipc::ReadOnlySharedMemoryHandle>
 CommandLineArg<mozilla::ipc::ReadOnlySharedMemoryHandle>::GetCommon(
     const char* aMatch, int& aArgc, char** aArgv, const CheckArgFlag aFlags);
 
+#ifdef XP_IOS
+// NOTE: This cannot be out of line, as xpc_object_t has different definitions
+// depending on what language is being built (C++/Objective-C++).
+template <>
+inline Maybe<DarwinObjectPtr<xpc_object_t>>
+CommandLineArg<DarwinObjectPtr<xpc_object_t>>::GetCommon(
+    const char* aMatch, int& aArgc, char** aArgv, const CheckArgFlag aFlags) {
+  if (Maybe<uint32_t> arg =
+          CommandLineArg<uint32_t>::GetCommon(aMatch, aArgc, aArgv, aFlags)) {
+    MOZ_RELEASE_ASSERT(*arg < std::size(gXPCObjects));
+    return Some(AdoptDarwinObject(std::exchange(gXPCObjects[*arg], nullptr)));
+  }
+  return Nothing();
+}
+#endif
+
 /// Put()
 
 template <>
@@ -192,6 +231,21 @@ template <>
 void CommandLineArg<mozilla::ipc::ReadOnlySharedMemoryHandle>::PutCommon(
     const char* aName, mozilla::ipc::ReadOnlySharedMemoryHandle aValue,
     ChildProcessArgs& aArgs);
+
+#ifdef XP_IOS
+// NOTE: This cannot be out of line, as xpc_object_t has different definitions
+// depending on what language is being built (C++/Objective-C++).
+template <>
+inline void CommandLineArg<DarwinObjectPtr<xpc_object_t>>::PutCommon(
+    const char* aName, DarwinObjectPtr<xpc_object_t> aValue,
+    ChildProcessArgs& aArgs) {
+  if (aValue) {
+    CommandLineArg<uint32_t>::PutCommon(
+        aName, static_cast<uint32_t>(aArgs.mXPCObjects.size()), aArgs);
+    aArgs.mXPCObjects.push_back(std::move(aValue));
+  }
+}
+#endif
 
 #if defined(__GNUC__)
 #  pragma GCC diagnostic push

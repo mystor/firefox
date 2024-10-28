@@ -9,6 +9,7 @@
 #include "GeckoView/IOSBootstrap.h"
 #include "GeckoView/GeckoViewSwiftSupport.h"
 
+#include "base/process_util.h"
 #include "mozilla/Bootstrap.h"
 #include "mozilla/DarwinObjectPtr.h"
 #include "mozilla/GeckoArgs.h"
@@ -187,6 +188,20 @@ void HandleBootstrapMessage(xpc_object_t aEvent) {
   }
 
   mozilla::geckoargs::SetPassedMachSendRights(std::move(sendRights));
+
+  xpc_object_t objectsArray = xpc_dictionary_get_array(aEvent, "objects");
+  if (!objectsArray) {
+    MOZ_CRASH("objects array not specified");
+    return;
+  }
+
+  std::vector<mozilla::DarwinObjectPtr<xpc_object_t>> xpcObjects(
+      xpc_array_get_count(objectsArray));
+  for (size_t i = 0; i < xpcObjects.size(); ++i) {
+    xpcObjects[i] = xpc_array_get_value(objectsArray, i);
+  }
+
+  mozilla::geckoargs::SetPassedXPCObjects(std::move(xpcObjects));
 
   // Populate a new argv array with our argument list from IPC.
   xpc_object_t args = xpc_dictionary_get_array(aEvent, "argv");
