@@ -12,6 +12,7 @@
 #include "base/process.h"
 
 #include "mozilla/EventTargetAndLockCapability.h"
+#include "mozilla/LibdispatchTarget.h"
 #include "mozilla/UniquePtr.h"
 #include "nsISupports.h"
 
@@ -57,8 +58,8 @@ class Channel::ChannelImpl final {
   bool ContinueConnect(xpc_object_t event) MOZ_REQUIRES(IOThread());
   bool ProcessIncomingMessages(xpc_object_t event) MOZ_REQUIRES(IOThread());
 
-  const mozilla::EventTargetCapability<nsISerialEventTarget>& IOThread() const
-      MOZ_RETURN_CAPABILITY(chan_cap_.Target()) {
+  const mozilla::EventTargetCapability<mozilla::LibdispatchTarget>& IOThread()
+      const MOZ_RETURN_CAPABILITY(chan_cap_.Target()) {
     return chan_cap_.Target();
   }
 
@@ -67,7 +68,8 @@ class Channel::ChannelImpl final {
   }
 
   // Compound capability of the IO thread and a Mutex.
-  mozilla::EventTargetAndLockCapability<nsISerialEventTarget, mozilla::Mutex>
+  mozilla::EventTargetAndLockCapability<mozilla::LibdispatchTarget,
+                                        mozilla::Mutex>
       chan_cap_;
 
   Mode mode_ MOZ_GUARDED_BY(IOThread());

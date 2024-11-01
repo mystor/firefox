@@ -14,6 +14,7 @@
 
 #include "base/process_util.h"
 #include "chrome/common/ipc_channel_utils.h"
+#include "mozilla/ipc/IOThread.h"
 #include "mozilla/ipc/ProtocolUtils.h"
 
 using namespace mozilla;
@@ -28,8 +29,7 @@ static constexpr const char* kDataKey = "d";
 
 Channel::ChannelImpl::ChannelImpl(ChannelHandle pipe, Mode mode,
                                   base::ProcessId other_pid)
-    : chan_cap_("ChannelImpl::SendMutex",
-                MessageLoopForIO::current()->SerialEventTarget()),
+    : chan_cap_("ChannelImpl::SendMutex", IOThread::Get()->GetEventTarget()),
       mode_(mode),
       other_pid_(other_pid) {
   xpc_type_t pipe_type = xpc_get_type(pipe.get());
@@ -72,22 +72,19 @@ bool Channel::ChannelImpl::Connect(Listener* listener) {
   // If we only have a server connection, attach to that connection instead.
   if (server_conn_ && !conn_) {
     RefPtr<ChannelImpl> self = this;
+    xpc_connection_set_target_queue(server_conn_.get(),
+                                    IOThread().GetEventTarget()->Queue());
     xpc_connection_set_event_handler(server_conn_.get(), ^(xpc_object_t event) {
-      self->IOThread().Dispatch(
-          NS_NewRunnableFunction("IPC::Channel xpc init event",
-                                 [self, event = DarwinObjectPtr{event}] {
-                                   self->IOThread().AssertOnCurrentThread();
-                                   self->chan_cap_.NoteOnTarget();
+      LibdispatchTarget::AutoOnQueue guard(self->IOThread().GetEventTarget());
+      self->IOThread().AssertOnCurrentThread();
+      self->chan_cap_.NoteOnTarget();
 
-                                   // Only attempt to continue if we're still
-                                   // awaiting conn_. All other messages on
-                                   // server_conn_ will be ignored.
-                                   if (self->server_conn_ && !self->conn_ &&
-                                       !self->ContinueConnect(event.get())) {
-                                     self->Close();
-                                     self->listener_->OnChannelError();
-                                   }
-                                 }));
+      // Only attempt to continue if we're still awaiting conn_. All other
+      // messages on server_conn_ will be ignored.
+      if (self->server_conn_ && !self->conn_ && !self->ContinueConnect(event)) {
+        self->Close();
+        self->listener_->OnChannelError();
+      }
     });
     xpc_connection_activate(server_conn_.get());
     return true;
@@ -120,19 +117,17 @@ bool Channel::ChannelImpl::ContinueConnect(xpc_object_t event) {
   conn_ = static_cast<xpc_connection_t>(event);
 
   RefPtr<ChannelImpl> self = this;
+  xpc_connection_set_target_queue(conn_.get(),
+                                  IOThread().GetEventTarget()->Queue());
   xpc_connection_set_event_handler(conn_.get(), ^(xpc_object_t event) {
-    // For legacy reasons we need to handle the event on the I/O thread
-    // (even we don't do any I/O there), so dispatch the handler there.
-    self->IOThread().Dispatch(NS_NewRunnableFunction(
-        "IPC::Channel xpc event", [self, event = DarwinObjectPtr{event}] {
-          self->IOThread().AssertOnCurrentThread();
-          self->chan_cap_.NoteOnTarget();
+    LibdispatchTarget::AutoOnQueue guard(self->IOThread().GetEventTarget());
+    self->IOThread().AssertOnCurrentThread();
+    self->chan_cap_.NoteOnTarget();
 
-          if (self->conn_ && !self->ProcessIncomingMessages(event.get())) {
-            self->Close();
-            self->listener_->OnChannelError();
-          }
-        }));
+    if (self->conn_ && !self->ProcessIncomingMessages(event)) {
+      self->Close();
+      self->listener_->OnChannelError();
+    }
   });
   xpc_connection_activate(conn_.get());
 

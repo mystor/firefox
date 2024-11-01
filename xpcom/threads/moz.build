@@ -126,6 +126,10 @@ if CONFIG["OS_ARCH"] == "WINNT":
     EXPORTS.mozilla += ["WinHandleWatcher.h"]
     UNIFIED_SOURCES += ["WinHandleWatcher.cpp"]
 
+if CONFIG["TARGET_OS"] == "iOS":
+    EXPORTS.mozilla += ["LibdispatchTarget.h"]
+    UNIFIED_SOURCES += ["LibdispatchTarget.mm"]
+
 # Should match the conditions in toolkit/components/backgroundhangmonitor/moz.build
 if (
     CONFIG["NIGHTLY_BUILD"]

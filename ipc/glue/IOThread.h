@@ -11,10 +11,19 @@
 #include "chrome/common/ipc_channel.h"
 #include "mozilla/ipc/ScopedPort.h"
 
+#ifdef XP_IOS
+#  include "mozilla/LibdispatchTarget.h"
+#  define MOZ_IOTHREAD_LIBDISPATCH
+#endif
+
 namespace mozilla::ipc {
 
 // Abstract background thread used for IPC I/O.
-class IOThread : private base::Thread {
+class IOThread
+#ifndef MOZ_IOTHREAD_LIBDISPATCH
+    : private base::Thread
+#endif
+{
  public:
   // Lifecycle Note: The IOThread is stored in a static, and is returned by raw
   // pointer here from potentially any thread. This is OK because the IOThread
@@ -23,10 +32,20 @@ class IOThread : private base::Thread {
   // lifetime of the IO Thread).
   static IOThread* Get() { return sSingleton; }
 
+#ifdef MOZ_IOTHREAD_LIBDISPATCH
+  using EventTarget = LibdispatchTarget;
+#else
+  using EventTarget = nsISerialEventTarget;
+#endif
+
   // Get the nsISerialEventTarget which should be used to dispatch events to run
   // on the IOThreadBase.
-  nsISerialEventTarget* GetEventTarget() {
+  EventTarget* GetEventTarget() {
+#ifdef MOZ_IOTHREAD_LIBDISPATCH
+    return mDispatchQueue;
+#else
     return base::Thread::message_loop()->SerialEventTarget();
+#endif
   }
 
  protected:
@@ -41,15 +60,24 @@ class IOThread : private base::Thread {
 
   // Init() and Cleanup() methods which will be invoked on the IOThread when the
   // IOThread is started/stopped.
+#ifdef MOZ_IOTHREAD_LIBDISPATCH
+  virtual void Init() = 0;
+  virtual void CleanUp() = 0;
+#else
   void Init() override = 0;
   void CleanUp() override = 0;
+#endif
 
  private:
   static IOThread* sSingleton;
+
+#ifdef MOZ_IOTHREAD_LIBDISPATCH
+  RefPtr<LibdispatchTarget> mDispatchQueue;
+#endif
 };
 
 // Background I/O thread used by the parent process.
-class IOThreadParent : public IOThread {
+class IOThreadParent final : public IOThread {
  public:
   IOThreadParent();
   ~IOThreadParent();
@@ -60,7 +88,7 @@ class IOThreadParent : public IOThread {
 };
 
 // Background I/O thread used by the child process.
-class IOThreadChild : public IOThread {
+class IOThreadChild final : public IOThread {
  public:
   IOThreadChild(IPC::Channel::ChannelHandle aClientHandle,
                 base::ProcessId aParentPid);

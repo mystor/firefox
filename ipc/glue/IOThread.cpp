@@ -21,6 +21,37 @@ namespace ipc {
 /* static */
 IOThread* IOThread::sSingleton = nullptr;
 
+#ifdef MOZ_IOTHREAD_LIBDISPATCH
+
+IOThread::IOThread(const char* aName)
+    : mDispatchQueue(MakeRefPtr<LibdispatchTarget>(aName)) {
+  sSingleton = this;
+}
+
+IOThread::~IOThread() { sSingleton = nullptr; }
+
+void IOThread::StartThread() {
+  // Dispatch a sync task to the DispatchQueue to call `Init()`.
+  dispatch_sync_f(mDispatchQueue->Queue(), this, [](void* context) {
+    IOThread* self = static_cast<IOThread*>(context);
+    LibdispatchTarget::AutoOnQueue _guard(self->mDispatchQueue);
+    self->Init();
+  });
+}
+
+void IOThread::StopThread() {
+  // Dispatch a sync task to the DispatchQueue to call `CleanUp()`.
+  // NOTE: This doesn't ensure that the IOThread queue no longer accepts events,
+  // as there appears to be no way to destroy a dispatch queue.
+  dispatch_sync_f(mDispatchQueue->Queue(), this, [](void* context) {
+    IOThread* self = static_cast<IOThread*>(context);
+    LibdispatchTarget::AutoOnQueue _guard(self->mDispatchQueue);
+    self->CleanUp();
+  });
+}
+
+#else  // !MOZ_IOTHREAD_LIBDISPATCH
+
 IOThread::IOThread(const char* aName) : base::Thread(aName) {
   sSingleton = this;
 }
@@ -45,6 +76,8 @@ void IOThread::StopThread() {
   // been joined.
   Stop();
 }
+
+#endif  // MOZ_IOTHREAD_LIBDISPATCH
 
 //
 // IOThreadParent
