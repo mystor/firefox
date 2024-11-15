@@ -4,8 +4,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-pref("toolkit.defaultChromeURI", "chrome://geckoview/content/geckoview.xhtml");
+// Non-static prefs that are specific to iOS GeckoView belong in this file.
+//
+// Please indent all prefs defined within #ifdef/#ifndef conditions. This
+// improves readability, particular for conditional blocks that exceed a single
+// screen.
+
+// Use software webrender as OpenGL support is not working yet.
 pref("gfx.webrender.software", true);
+
+// Enable the restricted sandbox for content processes.
 pref("security.sandbox.content.level", 1);
 
 // Complete the page load progress bar at different places according to this pref.
