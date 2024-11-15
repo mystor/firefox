@@ -10,8 +10,10 @@
 // improves readability, particular for conditional blocks that exceed a single
 // screen.
 
-// Use software webrender as OpenGL support is not working yet.
-pref("gfx.webrender.software", true);
+// Use software webrender on simulator due to missing APIs.
+#if TARGET_OS_SIMULATOR
+  pref("gfx.webrender.software", true);
+#endif
 
 // Enable the restricted sandbox for content processes.
 pref("security.sandbox.content.level", 1);
