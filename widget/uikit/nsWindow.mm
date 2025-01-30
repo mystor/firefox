@@ -48,6 +48,7 @@
 #include "mozilla/Unused.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/gfx/Logging.h"
+#include "mozilla/widget/GeckoViewDataCF.h"
 #include "mozilla/widget/GeckoViewSupport.h"
 #ifdef ACCESSIBILITY
 #  include "mozilla/a11y/MUIRootAccessibleProtocol.h"
@@ -1101,11 +1102,14 @@ already_AddRefed<nsWindow> nsWindow::From(nsIWidget* aWidget) {
 
 NS_IMPL_ISUPPORTS(IOSView, nsIGeckoViewEventDispatcher, nsIGeckoViewView)
 
-IOSView::~IOSView() { [mInitData release]; }
-
 nsresult IOSView::GetInitData(JSContext* aCx,
                               JS::MutableHandle<JS::Value> aOut) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  ErrorResult error;
+  GeckoViewDataCFToJS(aCx, mInitData.get(), aOut, error);
+  if (error.MaybeSetPendingException(aCx)) {
+    return NS_ERROR_FAILURE;
+  }
+  return NS_OK;
 }
 
 @interface GeckoViewWindowImpl : NSObject <GeckoViewWindow> {
@@ -1155,7 +1159,7 @@ id<GeckoViewWindow> GeckoViewOpenWindow(NSString* aId,
   // Prepare an nsIGeckoViewView to pass as argument to the window.
   RefPtr<IOSView> iosView = new IOSView();
   iosView->mEventDispatcher->Attach(aDispatcher);
-  iosView->mInitData = [aInitData retain];
+  iosView->mInitData.AssignUnderGetRule((CFTypeRef)aInitData);
 
   nsAutoCString chromeFlags("chrome,dialog=0,remote,resizable,scrollbars");
   if (aPrivateMode) {
