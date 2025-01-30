@@ -36,6 +36,7 @@ SOURCES += [
     "nsBidiKeyboard.mm",
     "nsLookAndFeel.mm",
     "nsNativeThemeUIKit.mm",
+    "nsUserIdleServiceUIKit.cpp",
     "nsWidgetFactory.mm",
     "nsWindow.mm",
     "ScreenHelperUIKit.mm",
