@@ -1,0 +1,75 @@
+# iOS Port Prototype
+
+The current iOS port prototype is built in 2 parts. The core libraries such as
+XUL are built as-normal, and then an xcode project is used to bundle these
+libraries into an iOS application, which can be deployed to a device or
+simulator.
+
+Currently there is no support for running automated iOS tests, though this is
+being investigated.
+
+## Simulator
+
+### Building
+
+1. Update your .mozconfig as described below:
+
+```
+# Enable the iOS application target.
+ac_add_options --enable-application=mobile/ios
+
+# Specify the relevant target for the iOS simulator.
+# Note that runninng on an iOS device is more complex, see below.
+ac_add_options --target=aarch64-apple-ios-sim  # simulator (apple silicon)
+```
+
+2. Build the main core of XUL with `./mach build` as normal.
+
+### Running
+
+Currently the in-tree wrapper for Gecko on iOS is the minimal "ExampleBrowser"
+application. This can be run in one of the following ways:
+
+1. If you have a simulator open or a device configured, you can use the
+   `./mach run` command to install `ExampleBrowser` on the simulator, and launch
+   it. Note that to use `./mach run` with a real device, you will need to have
+   `ios-deploy` installed, and your signing team configured through the xcode
+   project.
+
+2. You can open the xcode project at
+   `mobile/ios/ExampleBrowser/ExampleBrowser.xcodeproj`, and run it from there.
+
+## Real Device
+
+### Building
+
+To build for a real device, you'll need to provide some extra options in the
+`.mozconfig`:
+
+```
+# The target for a real iOS device is different than the simulator. This should
+# replace `--target=aarch64-apple-ios-sim`.
+ac_add_options --target=aarch64-apple-ios
+
+# Due to the iOS sandboxing restrictions it is not possible to run the JS JIT
+# on iOS, meaning it has to be disabled.
+ac_add_options --disable-jit
+
+# There are also failures attempting to initialize out RLBox WASM sandbox
+# currently, so that feature also needs to be disabled to run on-device.
+ac_add_options --without-wasm-sandboxed-libraries
+```
+
+In addition, e10s will be forcibly disabled when running on a real device, as
+child process launching is blocked by the iOS sandbox. Any logic which tries to
+launch a child process on device will fail.
+
+You are likely to run into a signing issue when trying to build, as the "team"
+on the project is my apple developer account. You'll need to modify the signing
+team in xcode to your own apple developer account to get the signing to work,
+and then approve that developer through the phone's settings interface.
+
+### Running
+
+Running on a device is similar to the simulator section, however you will need
+to have the `ios-deploy` tool installed to use `./mach run` with a real device.

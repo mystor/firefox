@@ -228,6 +228,8 @@ mobile/android/**/manifest.json
 
 # XCode project cruft
 /*.xcodeproj/
+mobile/ios/ExampleBrowser/ExampleBrowser.xcodeproj/project.xcworkspace/xcuserdata
+mobile/ios/ExampleBrowser/ExampleBrowser.xcodeproj/xcuserdata
 
 # Rust/Cargo output from running `cargo` directly
 /target/

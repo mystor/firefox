@@ -5900,6 +5900,56 @@ static already_AddRefed<nsIFile> GreOmniPath(int argc, char** argv) {
 
   return greOmni.forget();
 }
+#elif defined(XP_IOS)
+static already_AddRefed<nsIFile> GreOmniPath(int argc, char** argv) {
+  // Works even if we're not bundled.
+  CFBundleRef appBundle = CFBundleGetBundleWithIdentifier(
+      CFSTR("org.mozilla.ios.GeckoTestBrowser.GeckoView"));
+  if (!appBundle) {
+    MOZ_CRASH();
+    return nullptr;
+  }
+
+  CFURLRef executableURL = CFBundleCopyPrivateFrameworksURL(appBundle);
+  auto _releaseExecutableURL = MakeScopeExit([&] {
+    if (executableURL) CFRelease(executableURL);
+  });
+  if (!executableURL) {
+    MOZ_CRASH();
+    return nullptr;
+  }
+
+  UInt8 path[MAXPATHLEN];
+  if (!CFURLGetFileSystemRepresentation(executableURL, true, path,
+                                        MAXPATHLEN)) {
+    MOZ_CRASH();
+    return nullptr;
+  }
+
+  // Sanitize path in case the app was launched from Terminal via
+  // './firefox' for example.
+  size_t readPos = 0;
+  size_t writePos = 0;
+  while (path[readPos] != '\0') {
+    if (path[readPos] == '.' && path[readPos + 1] == '/') {
+      readPos += 2;
+    } else {
+      path[writePos] = path[readPos];
+      readPos++;
+      writePos++;
+    }
+  }
+  path[writePos] = '\0';
+
+  nsCOMPtr<nsIFile> greOmni;
+  nsresult rv = XRE_GetFileFromPath((char*)path, getter_AddRefs(greOmni));
+  if (NS_FAILED(rv)) {
+    PR_fprintf(PR_STDERR, "Error: argument --greomni requires a valid path\n");
+    return nullptr;
+  }
+
+  return greOmni.forget();
+}
 #endif
 
 /*
@@ -5982,7 +6032,7 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   if (!mAppData->xreDirectory) {
     nsCOMPtr<nsIFile> greDir;
 
-#if defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_WIDGET_ANDROID) || defined(XP_IOS)
     greDir = GreOmniPath(argc, argv);
     if (!greDir) {
       return 2;
