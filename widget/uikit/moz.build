@@ -10,6 +10,10 @@ with Files("**"):
 with Files("*TextInput*"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
+EXPORTS += [
+    "IOSBridge.h",
+]
+
 EXPORTS.mozilla.widget += [
     "EventDispatcher.h",
     "GeckoViewDataCF.h",
@@ -26,6 +30,7 @@ SOURCES += [
     "EventDispatcher.mm",
     "GeckoViewDataCF.cpp",
     "GfxInfo.cpp",
+    "IOSBridge.mm",
     "MediaKeysEventSourceFactory.cpp",
     "nsAppShell.mm",
     "nsBidiKeyboard.mm",
