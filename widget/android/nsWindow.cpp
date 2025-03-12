@@ -105,6 +105,7 @@
 #include "mozilla/layers/IAPZCTreeManager.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/widget/AndroidVsync.h"
+#include "mozilla/widget/GeckoViewDataJava.h"
 #include "mozilla/widget/Screen.h"
 
 #define GVS_LOG(...) MOZ_LOG(sGVSupportLog, LogLevel::Warning, (__VA_ARGS__))
@@ -1069,7 +1070,12 @@ nsresult AndroidView::GetInitData(JSContext* aCx,
     return NS_OK;
   }
 
-  return widget::EventDispatcher::UnboxBundle(aCx, mInitData, aOut);
+  ErrorResult error;
+  GeckoViewDataJavaToJS(aCx, mInitData, aOut, error);
+  if (error.MaybeSetPendingException(aCx)) {
+    return NS_ERROR_FAILURE;
+  }
+  return NS_OK;
 }
 
 /**
@@ -1813,7 +1819,7 @@ void GeckoViewSupport::Open(
   // Prepare an nsIGeckoViewView to pass as argument to the window.
   RefPtr<AndroidView> androidView = new AndroidView();
   androidView->mEventDispatcher->Attach(
-      java::EventDispatcher::Ref::From(aDispatcher), nullptr);
+      java::EventDispatcher::Ref::From(aDispatcher));
   androidView->mInitData = java::GeckoBundle::Ref::From(aInitData);
 
   nsAutoCString chromeFlags("chrome,dialog=0,remote,resizable,scrollbars");
@@ -1912,7 +1918,7 @@ void GeckoViewSupport::Transfer(const GeckoSession::Window::LocalRef& inst,
 
   MOZ_ASSERT(mWindow->mAndroidView);
   mWindow->mAndroidView->mEventDispatcher->Attach(
-      java::EventDispatcher::Ref::From(aDispatcher), mDOMWindow);
+      java::EventDispatcher::Ref::From(aDispatcher));
 
   RefPtr<jni::DetachPromise> promise = mWindow->mSessionAccessibility.Detach();
   if (aSessionAccessibility) {
@@ -1943,8 +1949,9 @@ void GeckoViewSupport::Transfer(const GeckoSession::Window::LocalRef& inst,
     // We're in a transfer; update init-data and notify JS code.
     mWindow->mAndroidView->mInitData = java::GeckoBundle::Ref::From(aInitData);
     OnReady(aQueue);
-    mWindow->mAndroidView->mEventDispatcher->Dispatch(
-        u"GeckoView:UpdateInitData");
+    mWindow->mAndroidView->mEventDispatcher->DispatchToEmbedder(
+        u"GeckoView:UpdateInitData"_ns, GeckoViewDataNullSource{}, nullptr,
+        IgnoreErrors());
   }
 
   DispatchToUiThread("GeckoViewSupport::Transfer",
@@ -2619,8 +2626,10 @@ nsresult nsWindow::MakeFullScreen(bool aFullScreen) {
   }
 
   mIsFullScreen = aFullScreen;
-  mAndroidView->mEventDispatcher->Dispatch(
-      aFullScreen ? u"GeckoView:FullScreenEnter" : u"GeckoView:FullScreenExit");
+  mAndroidView->mEventDispatcher->DispatchToEmbedder(
+      aFullScreen ? u"GeckoView:FullScreenEnter"_ns
+                  : u"GeckoView:FullScreenExit"_ns,
+      GeckoViewDataNullSource{}, nullptr, IgnoreErrors());
 
   nsIWidgetListener* listener = GetWidgetListener();
   if (listener) {

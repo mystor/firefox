@@ -4,9 +4,6 @@
 
 #include "GeckoViewHistory.h"
 
-#ifdef MOZ_WIDGET_ANDROID
-#  include "JavaBuiltins.h"
-#endif
 #include "jsapi.h"
 #include "js/Array.h"               // JS::GetArrayLength, JS::IsArrayObject
 #include "js/PropertyAndElement.h"  // JS_GetElement
@@ -32,8 +29,8 @@ using namespace mozilla::dom;
 using namespace mozilla::ipc;
 using namespace mozilla::widget;
 
-static const char16_t kOnVisitedMessage[] = u"GeckoView:OnVisited";
-static const char16_t kGetVisitedMessage[] = u"GeckoView:GetVisited";
+static const nsLiteralString kOnVisitedMessage = u"GeckoView:OnVisited"_ns;
+static const nsLiteralString kGetVisitedMessage = u"GeckoView:GetVisited"_ns;
 
 // Keep in sync with `GeckoSession.HistoryDelegate.VisitFlags`.
 enum class GeckoViewVisitFlags : int32_t {
@@ -237,6 +234,39 @@ class OnVisitedCallback final : public nsIGeckoViewEventCallback {
 
 NS_IMPL_ISUPPORTS(OnVisitedCallback, nsIGeckoViewEventCallback)
 
+struct OnVisitedSource : public GeckoViewDataSource {
+  void ToSink(GeckoViewDataSink& aSink, ErrorResult& aRv) const override {
+    auto visitProperties =
+        [&](GeckoViewDataSink::AddPropertyFunc aAddProperty) {
+          // "url": mUrl
+          aSink.SetString(NS_ConvertUTF8toUTF16(mURLSpec), aRv);
+          NS_ENSURE_FALSE_VOID(aRv.Failed());
+          aAddProperty(u"url"_ns);
+          NS_ENSURE_FALSE_VOID(aRv.Failed());
+
+          if (!mLastVisitedURLSpec.IsEmpty()) {
+            // "lastVisitedURL": mLastVisitedURL
+            aSink.SetString(NS_ConvertUTF8toUTF16(mLastVisitedURLSpec), aRv);
+            NS_ENSURE_FALSE_VOID(aRv.Failed());
+            aAddProperty(u"lastVisitedURL"_ns);
+            NS_ENSURE_FALSE_VOID(aRv.Failed());
+          }
+
+          // "flags": mFlags
+          aSink.SetInt32(mFlags, aRv);
+          NS_ENSURE_FALSE_VOID(aRv.Failed());
+          aAddProperty(u"flags"_ns);
+          NS_ENSURE_FALSE_VOID(aRv.Failed());
+        };
+    aSink.HandleObject(1, visitProperties, aRv);
+    NS_ENSURE_FALSE_VOID(aRv.Failed());
+  }
+
+  nsAutoCString mURLSpec;
+  nsAutoCString mLastVisitedURLSpec;
+  int32_t mFlags = 0;
+};
+
 NS_IMETHODIMP
 GeckoViewHistory::VisitURI(nsIWidget* aWidget, nsIURI* aURI,
                            nsIURI* aLastVisitedURI, uint32_t aFlags,
@@ -274,72 +304,52 @@ GeckoViewHistory::VisitURI(nsIWidget* aWidget, nsIURI* aURI,
   }
 
   // If nobody is listening for this, we can stop now.
-  if (!dispatcher->HasListener(kOnVisitedMessage)) {
+  if (!dispatcher->HasEmbedderListener(kOnVisitedMessage)) {
     return NS_OK;
   }
 
-#ifdef MOZ_WIDGET_ANDROID
-  AutoTArray<jni::String::LocalRef, 3> keys;
-  AutoTArray<jni::Object::LocalRef, 3> values;
-
-  nsAutoCString uriSpec;
-  if (NS_WARN_IF(NS_FAILED(aURI->GetSpec(uriSpec)))) {
+  OnVisitedSource source;
+  if (NS_WARN_IF(NS_FAILED(aURI->GetSpec(source.mURLSpec)))) {
     return NS_OK;
   }
-  keys.AppendElement(jni::StringParam(u"url"_ns));
-  values.AppendElement(jni::StringParam(uriSpec));
-
   if (aLastVisitedURI) {
-    nsAutoCString lastVisitedURISpec;
-    if (NS_WARN_IF(NS_FAILED(aLastVisitedURI->GetSpec(lastVisitedURISpec)))) {
+    if (NS_WARN_IF(NS_FAILED(aURI->GetSpec(source.mLastVisitedURLSpec)))) {
       return NS_OK;
     }
-    keys.AppendElement(jni::StringParam(u"lastVisitedURL"_ns));
-    values.AppendElement(jni::StringParam(lastVisitedURISpec));
   }
 
-  int32_t flags = 0;
   if (aFlags & TOP_LEVEL) {
-    flags |= static_cast<int32_t>(GeckoViewVisitFlags::VISIT_TOP_LEVEL);
+    source.mFlags |= static_cast<int32_t>(GeckoViewVisitFlags::VISIT_TOP_LEVEL);
   }
   if (aFlags & REDIRECT_TEMPORARY) {
-    flags |=
+    source.mFlags |=
         static_cast<int32_t>(GeckoViewVisitFlags::VISIT_REDIRECT_TEMPORARY);
   }
   if (aFlags & REDIRECT_PERMANENT) {
-    flags |=
+    source.mFlags |=
         static_cast<int32_t>(GeckoViewVisitFlags::VISIT_REDIRECT_PERMANENT);
   }
   if (aFlags & REDIRECT_SOURCE) {
-    flags |= static_cast<int32_t>(GeckoViewVisitFlags::VISIT_REDIRECT_SOURCE);
+    source.mFlags |=
+        static_cast<int32_t>(GeckoViewVisitFlags::VISIT_REDIRECT_SOURCE);
   }
   if (aFlags & REDIRECT_SOURCE_PERMANENT) {
-    flags |= static_cast<int32_t>(
+    source.mFlags |= static_cast<int32_t>(
         GeckoViewVisitFlags::VISIT_REDIRECT_SOURCE_PERMANENT);
   }
   if (aFlags & UNRECOVERABLE_ERROR) {
-    flags |=
+    source.mFlags |=
         static_cast<int32_t>(GeckoViewVisitFlags::VISIT_UNRECOVERABLE_ERROR);
   }
-  keys.AppendElement(jni::StringParam(u"flags"_ns));
-  values.AppendElement(java::sdk::Integer::ValueOf(flags));
-
-  MOZ_ASSERT(keys.Length() == values.Length());
-
-  auto bundleKeys = jni::ObjectArray::New<jni::String>(keys.Length());
-  auto bundleValues = jni::ObjectArray::New<jni::Object>(values.Length());
-  for (size_t i = 0; i < keys.Length(); ++i) {
-    bundleKeys->SetElement(i, keys[i]);
-    bundleValues->SetElement(i, values[i]);
-  }
-  auto bundle = java::GeckoBundle::New(bundleKeys, bundleValues);
 
   nsCOMPtr<nsIGeckoViewEventCallback> callback =
       new OnVisitedCallback(this, aURI);
 
-  Unused << NS_WARN_IF(
-      NS_FAILED(dispatcher->Dispatch(kOnVisitedMessage, bundle, callback)));
-#endif
+  IgnoredErrorResult error;
+  dispatcher->DispatchToEmbedder(kOnVisitedMessage, source, callback, error);
+  if (error.Failed()) {
+    NS_WARNING("Dispatch of OnVisited to Embedder failed!");
+  }
 
   return NS_OK;
 }
@@ -443,6 +453,44 @@ class GetVisitedCallback final : public nsIGeckoViewEventCallback {
 
 NS_IMPL_ISUPPORTS(GetVisitedCallback, nsIGeckoViewEventCallback)
 
+// FIXME: Add helper types for building a GeckoViewDataSource from C++ code,
+// because manually doing it like this is pretty gross.
+struct VisitedStateSource : public GeckoViewDataSource {
+  explicit VisitedStateSource(const nsTArray<RefPtr<nsIURI>>& aUrls)
+      : mUrls(aUrls) {}
+
+  void UrlsArraySource(GeckoViewDataSink& aSink, ErrorResult& aRv) const {
+    auto visitElements = [&](GeckoViewDataSink::AddElementFunc aAddElement) {
+      for (size_t i = 0; i < mUrls.Length(); ++i) {
+        nsAutoCString uriSpec;
+        aRv = mUrls[i]->GetSpec(uriSpec);
+        NS_ENSURE_FALSE_VOID(aRv.Failed());
+        aSink.SetString(NS_ConvertUTF8toUTF16(uriSpec), aRv);
+        NS_ENSURE_FALSE_VOID(aRv.Failed());
+        aAddElement(i);
+        NS_ENSURE_FALSE_VOID(aRv.Failed());
+      }
+    };
+    aSink.HandleArray(mUrls.Length(), visitElements, aRv);
+    NS_ENSURE_FALSE_VOID(aRv.Failed());
+  }
+
+  void ToSink(GeckoViewDataSink& aSink, ErrorResult& aRv) const override {
+    auto visitProperties =
+        [&](GeckoViewDataSink::AddPropertyFunc aAddProperty) {
+          // "urls": [mUrls...]
+          UrlsArraySource(aSink, aRv);
+          NS_ENSURE_FALSE_VOID(aRv.Failed());
+          aAddProperty(u"urls"_ns);
+          NS_ENSURE_FALSE_VOID(aRv.Failed());
+        };
+    aSink.HandleObject(1, visitProperties, aRv);
+    NS_ENSURE_FALSE_VOID(aRv.Failed());
+  }
+
+  const nsTArray<RefPtr<nsIURI>>& mUrls;
+};
+
 /**
  * Queries the history delegate to find which URIs have been visited. This
  * is always called in the parent process: from `GetVisited` in non-e10s, and
@@ -462,38 +510,19 @@ void GeckoViewHistory::QueryVisitedState(nsIWidget* aWidget,
   }
 
   // If nobody is listening for this we can stop now
-  if (!dispatcher->HasListener(kGetVisitedMessage)) {
+  if (!dispatcher->HasEmbedderListener(kGetVisitedMessage)) {
     return;
   }
-
-#ifdef MOZ_WIDGET_ANDROID
-  // Assemble a bundle like `{ urls: ["http://example.com/1", ...] }`.
-  auto uris = jni::ObjectArray::New<jni::String>(aURIs.Length());
-  for (size_t i = 0; i < aURIs.Length(); ++i) {
-    nsAutoCString uriSpec;
-    if (NS_WARN_IF(NS_FAILED(aURIs[i]->GetSpec(uriSpec)))) {
-      continue;
-    }
-    jni::String::LocalRef value{jni::StringParam(uriSpec)};
-    uris->SetElement(i, value);
-  }
-
-  auto bundleKeys = jni::ObjectArray::New<jni::String>(1);
-  jni::String::LocalRef key(jni::StringParam(u"urls"_ns));
-  bundleKeys->SetElement(0, key);
-
-  auto bundleValues = jni::ObjectArray::New<jni::Object>(1);
-  jni::Object::LocalRef value(uris);
-  bundleValues->SetElement(0, value);
-
-  auto bundle = java::GeckoBundle::New(bundleKeys, bundleValues);
 
   nsCOMPtr<nsIGeckoViewEventCallback> callback =
       new GetVisitedCallback(this, aInterestedProcess, std::move(aURIs));
 
-  Unused << NS_WARN_IF(
-      NS_FAILED(dispatcher->Dispatch(kGetVisitedMessage, bundle, callback)));
-#endif
+  IgnoredErrorResult error;
+  dispatcher->DispatchToEmbedder(kGetVisitedMessage, VisitedStateSource(aURIs),
+                                 callback, error);
+  if (error.Failed()) {
+    NS_WARNING("Dispatch of GetVisited to Embedder failed!");
+  }
 }
 
 /**

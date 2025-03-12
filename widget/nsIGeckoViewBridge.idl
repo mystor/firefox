@@ -6,6 +6,12 @@
 
 interface mozIDOMWindowProxy;
 
+%{C++
+namespace mozilla::widget {
+class GeckoViewDataSource;
+}
+%}
+
 [scriptable, uuid(e64c39b8-b8ec-477d-aef5-89d517ff9219)]
 interface nsIGeckoViewEventCallback : nsISupports
 {
@@ -13,6 +19,13 @@ interface nsIGeckoViewEventCallback : nsISupports
   void onSuccess([optional] in jsval data);
   [implicit_jscontext]
   void onError([optional] in jsval data);
+
+  %{C++
+  // Helper methods for calling OnSuccess and OnError from other languages.
+  // Implemented in EventDispatcherBase.cpp
+  void DoOnSuccess(const mozilla::widget::GeckoViewDataSource& aData);
+  void DoOnError(const mozilla::widget::GeckoViewDataSource& aData);
+  %}
 };
 
 [scriptable, function, uuid(819ee2db-d3b8-46dd-a476-40f89c49133c)]
@@ -29,7 +42,7 @@ interface nsIGeckoViewEventListener : nsISupports
                [optional] in nsIGeckoViewEventCallback callback);
 };
 
-[scriptable, uuid(e98bf792-4145-411e-b298-8219d9b03817)]
+[scriptable, builtinclass, uuid(e98bf792-4145-411e-b298-8219d9b03817)]
 interface nsIGeckoViewEventDispatcher : nsISupports
 {
   [implicit_jscontext]
@@ -45,13 +58,13 @@ interface nsIGeckoViewEventDispatcher : nsISupports
                           in jsval events);
 };
 
-[scriptable, uuid(60a78a94-6117-432f-9d49-304913a931c5)]
+[scriptable, builtinclass, uuid(60a78a94-6117-432f-9d49-304913a931c5)]
 interface nsIGeckoViewView : nsIGeckoViewEventDispatcher
 {
   [implicit_jscontext] readonly attribute jsval initData;
 };
 
-[scriptable, uuid(1beb70d3-70f3-4742-98cc-a3d301b26c0c)]
+[scriptable, builtinclass, uuid(1beb70d3-70f3-4742-98cc-a3d301b26c0c)]
 interface nsIGeckoViewBridge : nsIGeckoViewEventDispatcher
 {
   nsIGeckoViewEventDispatcher getDispatcherByName(in string name);

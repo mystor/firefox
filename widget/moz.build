@@ -96,6 +96,16 @@ elif toolkit in ("android", "uikit"):
         "nsIGeckoViewBridge.idl",
     ]
 
+    EXPORTS.mozilla.widget += [
+        "EventDispatcherBase.h",
+        "GeckoViewData.h",
+        "GeckoViewDataJS.h",
+    ]
+    UNIFIED_SOURCES += [
+        "EventDispatcherBase.cpp",
+        "GeckoViewDataJS.cpp",
+    ]
+
 if CONFIG["NS_PRINTING"]:
     # Needs to go before the XPIDL_MODULE line.
     XPIDL_SOURCES += [
