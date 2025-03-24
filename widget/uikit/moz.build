@@ -12,6 +12,7 @@ with Files("*TextInput*"):
 
 EXPORTS.mozilla.widget += [
     "EventDispatcher.h",
+    "GeckoViewDataCF.h",
     "GeckoViewSupport.h",
     "IOSView.h",
     "nsWindow.h",
@@ -23,6 +24,7 @@ EXPORTS.GeckoView += [
 
 SOURCES += [
     "EventDispatcher.mm",
+    "GeckoViewDataCF.cpp",
     "GfxInfo.cpp",
     "MediaKeysEventSourceFactory.cpp",
     "nsAppShell.mm",

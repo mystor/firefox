@@ -5,54 +5,154 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "EventDispatcher.h"
+
+#include "mozilla/MacStringHelpers.h"
+#include "mozilla/dom/ScriptSettings.h"
+#include "mozilla/widget/GeckoViewDataCF.h"
 #include "mozilla/widget/GeckoViewSupport.h"
 
-@interface EventDispatcherImpl : NSObject <GeckoEventDispatcher> {
-  RefPtr<mozilla::widget::EventDispatcher> mDispatcher;
+using namespace mozilla;
+using namespace mozilla::widget;
+
+namespace {
+class SwiftCallbackDelegate final
+    : public EventDispatcherBase::CallbackDelegateBase {
+ public:
+  explicit SwiftCallbackDelegate(id<EventCallback> aCallback)
+      : mCallback(aCallback) {
+    [aCallback retain];
+  }
+
+  void OnSuccess(const GeckoViewDataSource& aData, ErrorResult& aRv) override {
+    CFTypeRefPtr<CFTypeRef> data;
+    GeckoViewDataCFSink sink(data);
+    aData.ToSink(sink, aRv);
+    if (!aRv.Failed()) {
+      [mCallback sendSuccess:(id)data.get()];
+    }
+  }
+
+  void OnError(const GeckoViewDataSource& aData, ErrorResult& aRv) override {
+    CFTypeRefPtr<CFTypeRef> data;
+    GeckoViewDataCFSink sink(data);
+    aData.ToSink(sink, aRv);
+    if (!aRv.Failed()) {
+      [mCallback sendError:(id)data.get()];
+    }
+  }
+
+ private:
+  virtual ~SwiftCallbackDelegate() { [mCallback release]; }
+
+  id<EventCallback> mCallback;
+};
+}  // namespace
+
+// Objective-C wrapper for a nsIGeckoViewEventCallback.
+@interface NativeCallbackDelegateSupport : NSObject <EventCallback> {
+  nsCOMPtr<nsIGeckoViewEventCallback> mCallback;
 }
 
-- (id)initWithDispatcher:(mozilla::widget::EventDispatcher*)dispatcher;
+- (id)initWithCallback:(nsIGeckoViewEventCallback*)callback;
+- (void)sendSuccess:(id)response;
+- (void)sendError:(id)response;
+@end
+
+@implementation NativeCallbackDelegateSupport
+- (id)initWithCallback:(nsIGeckoViewEventCallback*)callback {
+  self = [super init];
+  mCallback = callback;
+  return self;
+}
+- (void)sendSuccess:(id)response {
+  AssertIsOnMainThread();
+  mCallback->DoOnSuccess(GeckoViewDataCFSource((CFTypeRef)response));
+}
+- (void)sendError:(id)response {
+  AssertIsOnMainThread();
+  mCallback->DoOnError(GeckoViewDataCFSource((CFTypeRef)response));
+}
+@end
+
+// Objective-C wrapper for an EventDispatcher.
+@interface EventDispatcherImpl : NSObject <GeckoEventDispatcher> {
+  RefPtr<EventDispatcher> mDispatcher;
+}
+
+- (id)initWithDispatcher:(EventDispatcher*)dispatcher;
+
 @end
 
 @implementation EventDispatcherImpl
-- (id)initWithDispatcher:(mozilla::widget::EventDispatcher*)dispatcher {
+
+- (id)initWithDispatcher:(EventDispatcher*)dispatcher {
   self = [super init];
   self->mDispatcher = dispatcher;
   return self;
 }
+
+- (void)dispatchToGecko:(NSString*)type
+                message:(id)message
+               callback:(id<EventCallback>)callback {
+  AssertIsOnMainThread();
+
+  nsString event;
+  CopyNSStringToXPCOMString(type, event);
+
+  nsCOMPtr<nsIGeckoViewEventCallback> geckoCb;
+  if (callback) {
+    geckoCb = new SwiftCallbackDelegate(callback);
+  }
+
+  mDispatcher->DispatchToGecko(event, GeckoViewDataCFSource((CFTypeRef)message),
+                               geckoCb);
+}
+
+- (BOOL)hasListener:(NSString*)type {
+  nsString event;
+  CopyNSStringToXPCOMString(type, event);
+
+  return mDispatcher->HasGeckoListener(event);
+}
+
 @end
 
 namespace mozilla::widget {
 
-NS_IMPL_ISUPPORTS(EventDispatcher, nsIGeckoViewEventDispatcher)
-
-NS_IMETHODIMP
-EventDispatcher::Dispatch(JS::Handle<JS::Value> aEvent,
-                          JS::Handle<JS::Value> aData,
-                          nsIGeckoViewEventCallback* aCallback,
-                          nsIGeckoViewEventFinalizer* aFinalizer,
-                          JSContext* aCx) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+bool EventDispatcher::HasEmbedderListener(const nsAString& aEvent) {
+  id<SwiftEventDispatcher> dispatcher = (id<SwiftEventDispatcher>)mDispatcher;
+  return [dispatcher hasListener:XPCOMStringToNSString(aEvent)];
 }
 
-NS_IMETHODIMP
-EventDispatcher::RegisterListener(nsIGeckoViewEventListener* aListener,
-                                  JS::Handle<JS::Value> aEvents,
-                                  JSContext* aCx) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
+void EventDispatcher::DispatchToEmbedder(const nsAString& aEvent,
+                                         const GeckoViewDataSource& aData,
+                                         nsIGeckoViewEventCallback* aCallback,
+                                         ErrorResult& aRv) {
+  // Convert the data payload to CoreFoundation types
+  CFTypeRefPtr<CFTypeRef> data;
+  GeckoViewDataCFSink sink(data);
+  aData.ToSink(sink, aRv);
+  if (aRv.Failed()) {
+    return;
+  }
 
-NS_IMETHODIMP
-EventDispatcher::UnregisterListener(nsIGeckoViewEventListener* aListener,
-                                    JS::Handle<JS::Value> aEvents,
-                                    JSContext* aCx) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
+  // Wrap the callback if provided into a Swift callback.
+  NativeCallbackDelegateSupport* callback = nil;
+  if (aCallback) {
+    callback = [[[NativeCallbackDelegateSupport alloc]
+        initWithCallback:aCallback] autorelease];
+  }
 
-bool EventDispatcher::HasListener(const char16_t* aEvent) { return false; }
+  // Call the swift dispatcher.
+  dom::AutoNoJSAPI nojsapi;
+  id<SwiftEventDispatcher> dispatcher = (id<SwiftEventDispatcher>)mDispatcher;
+  [dispatcher dispatchToSwift:XPCOMStringToNSString(aEvent)
+                      message:(id)data.get()
+                     callback:callback];
+}
 
 void EventDispatcher::Attach(id aDispatcher) {
-  MOZ_ASSERT(NS_IsMainThread());
+  AssertIsOnMainThread();
   MOZ_ASSERT(aDispatcher);
 
   id<SwiftEventDispatcher> prevDispatcher =
@@ -76,14 +176,18 @@ void EventDispatcher::Attach(id aDispatcher) {
 }
 
 void EventDispatcher::Shutdown() {
+  AssertIsOnMainThread();
+
   if (mDispatcher) {
     [mDispatcher release];
   }
   mDispatcher = nullptr;
+
+  EventDispatcherBase::Shutdown();
 }
 
 void EventDispatcher::Detach() {
-  MOZ_ASSERT(NS_IsMainThread());
+  AssertIsOnMainThread();
   MOZ_ASSERT(mDispatcher);
 
   // SetAttachedToGecko will call disposeNative for us later on the Gecko
@@ -93,6 +197,13 @@ void EventDispatcher::Detach() {
   }
 
   Shutdown();
+}
+
+EventDispatcher::~EventDispatcher() {
+  if (mDispatcher) {
+    [mDispatcher release];
+  }
+  mDispatcher = nullptr;
 }
 
 }  // namespace mozilla::widget
