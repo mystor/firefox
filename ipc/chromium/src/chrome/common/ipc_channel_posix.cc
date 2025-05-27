@@ -103,7 +103,7 @@ static inline ssize_t corrected_sendmsg(int socket,
 }  // namespace
 //------------------------------------------------------------------------------
 
-ChannelPosix::ChannelPosix(ChannelHandle pipe, Mode mode,
+ChannelPosix::ChannelPosix(mozilla::UniqueFileHandle pipe, Mode mode,
                            base::ProcessId other_pid)
     : other_pid_(other_pid) {
   Init(mode);
@@ -1173,8 +1173,8 @@ bool ChannelPosix::CreateRawPipe(ChannelHandle* server, ChannelHandle* client) {
     return false;
   }
 
-  server->reset(fds[0]);
-  client->reset(fds[1]);
+  server->emplace<mozilla::UniqueFileHandle>(fds[0]);
+  client->emplace<mozilla::UniqueFileHandle>(fds[1]);
   return true;
 }
 
