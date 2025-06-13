@@ -551,9 +551,9 @@ class MessageLoopForIO : public MessageLoop {
   bool WatchFileDescriptor(int fd, bool persistent, Mode mode,
                            FileDescriptorWatcher* controller,
                            Watcher* delegate);
-  bool WatchMachReceivePort(mach_port_t port,
-                            MachPortWatchController* controller,
-                            MachPortWatcher* delegate);
+  bool WatchMachPort(mach_port_t port, Mode mode,
+                     MachPortWatchController* controller,
+                     MachPortWatcher* delegate);
 
 #else
   typedef base::MessagePumpLibevent::Watcher Watcher;

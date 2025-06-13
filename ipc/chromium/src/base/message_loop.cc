@@ -721,10 +721,12 @@ bool MessageLoopForIO::WatchFileDescriptor(int fd, bool persistent, Mode mode,
       controller, delegate);
 }
 
-bool MessageLoopForIO::WatchMachReceivePort(mach_port_t port,
-                                            MachPortWatchController* controller,
-                                            MachPortWatcher* delegate) {
-  return pump_kqueue()->WatchMachReceivePort(port, controller, delegate);
+bool MessageLoopForIO::WatchMachPort(mach_port_t port, Mode mode,
+                                     MachPortWatchController* controller,
+                                     MachPortWatcher* delegate) {
+  return pump_kqueue()->WatchMachPort(
+      port, static_cast<base::MessagePumpKqueue::Mode>(mode), controller,
+      delegate);
 }
 
 #else

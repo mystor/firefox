@@ -66,6 +66,7 @@ class ChannelMach final : public Channel,
 
   // MessageLoopForIO::MachPortWatcher implementation.
   virtual void OnMachMessageReceived(mach_port_t port) override;
+  virtual void OnMachSendPossible(mach_port_t port, bool final) override;
 
   void OutputQueuePush(mozilla::UniquePtr<Message> msg)
       MOZ_REQUIRES(SendMutex());
@@ -73,7 +74,10 @@ class ChannelMach final : public Channel,
 
   // Watch controller for |receive_port_|, calls OnMachMessageReceived() when
   // new messages are available.
-  MessageLoopForIO::MachPortWatchController watch_controller_;
+  MessageLoopForIO::MachPortWatchController receive_controller_;
+  // Watch controller for |send_port_|, calls OnMachSendPossible() when it's
+  // possible to send, or the connection is dead.
+  MessageLoopForIO::MachPortWatchController send_controller_;
 
   // We always initialize |receive_port_| in the constructor, but |send_port_|
   // may not be initialized until we've received a message from our peer.

@@ -74,6 +74,7 @@ class MessagePumpKqueue : public MessagePump {
    public:
     virtual ~MachPortWatcher() {}
     virtual void OnMachMessageReceived(mach_port_t port) = 0;
+    virtual void OnMachSendPossible(mach_port_t port, bool final) = 0;
   };
 
   // Controller interface that is used to stop receiving events for an
@@ -88,15 +89,17 @@ class MessagePumpKqueue : public MessagePump {
    protected:
     friend class MessagePumpKqueue;
 
-    void Init(MessagePumpKqueue* pump, mach_port_t port,
+    void Init(MessagePumpKqueue* pump, mach_port_t port, int mode,
               MachPortWatcher* watcher);
     void Reset();
 
     mach_port_t port() { return port_; }
+    int mode() { return mode_; }
     MachPortWatcher* watcher() { return watcher_; }
 
    private:
     mach_port_t port_ = MACH_PORT_NULL;
+    int mode_ = 0;
     MachPortWatcher* watcher_ = nullptr;
     RefPtr<MessagePumpKqueue> pump_;
 
@@ -112,13 +115,16 @@ class MessagePumpKqueue : public MessagePump {
   void ScheduleWork() override;
   void ScheduleDelayedWork(const TimeTicks& delayed_work_time) override;
 
-  // Begins watching the Mach receive right named by |port|. The |controller|
-  // can be used to stop watching for incoming messages, and new message
-  // notifications are delivered to the |delegate|. Returns true if the watch
-  // was successfully set-up and false on error.
-  bool WatchMachReceivePort(mach_port_t port,
-                            MachPortWatchController* controller,
-                            MachPortWatcher* delegate);
+  // Begins watching the Mach right named by |port|. The |controller| can be
+  // used to stop watching. If |mode| is WATCH_READ, |port| must name a receive
+  // right, and new message notifications are delivered to the |delegate|. If
+  // |mode| is WATCH_WRITE, |port| must name a send right, and send possible
+  // (after sending a message with MACH_SEND_NOTIFY) and dead name notifications
+  // are delivered to the |delegate|. Returns true if the watch was successfully
+  // set-up and false on error.
+  bool WatchMachPort(mach_port_t port, int mode,
+                     MachPortWatchController* controller,
+                     MachPortWatcher* delegate);
 
   bool WatchFileDescriptor(int fd, bool persistent, int mode,
                            FileDescriptorWatcher* controller,
@@ -146,11 +152,11 @@ class MessagePumpKqueue : public MessagePump {
   // base::TimeTicks::Max(). Updates |scheduled_wakeup_time_| to follow.
   void UpdateWakeupTimer(const base::TimeTicks& wakeup_time);
 
-  // Receive right to which an empty Mach message is sent to wake up the pump
-  // in response to ScheduleWork().
-  mozilla::UniqueMachReceiveRight wakeup_;
-  // Scratch buffer that is used to receive the message sent to |wakeup_|.
-  mach_msg_empty_rcv_t wakeup_buffer_{};
+  // Receive right used internally to wake up the pump in response to
+  // ScheduleWork(), and to listen for system notifications.
+  mozilla::UniqueMachReceiveRight notify_;
+  // Scratch buffer that is used to receive messages sent to |notify_|.
+  mach_send_possible_notification_t notify_buffer_{};
 
   // Watch controllers for FDs. IDs are generated from next_fd_controller_id_
   // and are stored in the kevent64_s::udata field.
@@ -158,7 +164,8 @@ class MessagePumpKqueue : public MessagePump {
   uint64_t next_fd_controller_id_ = 0;
 
   // Watch controllers for Mach ports. IDs are the port being watched.
-  nsTHashMap<mach_port_name_t, MachPortWatchController*> port_controllers_;
+  nsTHashMap<mach_port_name_t, MachPortWatchController*> receive_controllers_;
+  nsTHashMap<mach_port_name_t, MachPortWatchController*> send_controllers_;
 
   // The kqueue that drives the pump.
   mozilla::UniqueFileHandle kqueue_;

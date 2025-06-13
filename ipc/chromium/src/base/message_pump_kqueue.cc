@@ -20,6 +20,8 @@ namespace base {
 
 namespace {
 
+static constexpr mach_msg_id_t kWakeupMessageId = 'WAKE';
+
 // On iOS, the normal `kevent64` method is blocked by the content process
 // sandbox, so instead we use `be_kevent64` from the BrowserEngineCore library.
 static int platform_kevent64(int fd, const kevent64_s* changelist, int nchanges,
@@ -33,6 +35,27 @@ static int platform_kevent64(int fd, const kevent64_s* changelist, int nchanges,
 
 int ChangeOneEvent(const mozilla::UniqueFileHandle& kqueue, kevent64_s* event) {
   return HANDLE_EINTR(platform_kevent64(kqueue.get(), event, 1, nullptr, 0, 0));
+}
+
+bool RequestSendPossibleNotification(mach_port_t notify_port,
+                                     mach_port_t port) {
+  mozilla::UniqueMachSendRight previous;
+  kern_return_t kr = mach_port_request_notification(
+      mach_task_self(), port, MACH_NOTIFY_SEND_POSSIBLE, 0, notify_port,
+      MACH_MSG_TYPE_MAKE_SEND_ONCE, mozilla::getter_Transfers(previous));
+  if (kr != KERN_SUCCESS) {
+    // Not an error if we're clearing, and the port is a dead name already.
+    mach_port_type_t type = 0;
+    if (notify_port == MACH_PORT_NULL &&
+        KERN_SUCCESS == mach_port_type(mach_task_self(), port, &type) &&
+        (type & MACH_PORT_TYPE_DEAD_NAME)) {
+      return true;
+    }
+
+    DLOG(ERROR) << "mach_port_request_notification: " << mach_error_string(kr);
+    return false;
+  }
+  return true;
 }
 
 }  // namespace
@@ -82,17 +105,20 @@ bool MessagePumpKqueue::MachPortWatchController::StopWatchingMachPort() {
 }
 
 void MessagePumpKqueue::MachPortWatchController::Init(
-    MessagePumpKqueue* pump, mach_port_t port, MachPortWatcher* watcher) {
+    MessagePumpKqueue* pump, mach_port_t port, int mode,
+    MachPortWatcher* watcher) {
   DCHECK(!watcher_);
   DCHECK(watcher);
   DCHECK(pump);
   port_ = port;
+  mode_ = mode;
   watcher_ = watcher;
   pump_ = pump;
 }
 
 void MessagePumpKqueue::MachPortWatchController::Reset() {
   port_ = MACH_PORT_NULL;
+  mode_ = 0;
   watcher_ = nullptr;
   pump_ = nullptr;
 }
@@ -103,22 +129,21 @@ MessagePumpKqueue::MessagePumpKqueue() : kqueue_(kqueue()) {
   // Create a Mach port that will be used to wake up the pump by sending
   // a message in response to ScheduleWork(). This is significantly faster than
   // using an EVFILT_USER event, especially when triggered across threads.
-  mach_port_t wakeup;
   kern_return_t kr =
-      mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &wakeup);
-  wakeup_.reset(wakeup);
+      mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE,
+                         mozilla::getter_Transfers(notify_));
   CHECK(kr == KERN_SUCCESS)
   << "mach_port_allocate: " << mach_error_string(kr);
 
   // Specify the wakeup port event to directly receive the Mach message as part
   // of the kevent64() syscall.
   kevent64_s event{};
-  event.ident = wakeup_.get();
+  event.ident = notify_.get();
   event.filter = EVFILT_MACHPORT;
   event.flags = EV_ADD;
   event.fflags = MACH_RCV_MSG;
-  event.ext[0] = reinterpret_cast<uint64_t>(&wakeup_buffer_);
-  event.ext[1] = sizeof(wakeup_buffer_);
+  event.ext[0] = reinterpret_cast<uint64_t>(&notify_buffer_);
+  event.ext[1] = sizeof(notify_buffer_);
 
   int rv = ChangeOneEvent(kqueue_, &event);
   DCHECK(rv == 0) << "kevent64";
@@ -164,7 +189,8 @@ void MessagePumpKqueue::ScheduleWork() {
   message.header.msgh_size = sizeof(message);
   message.header.msgh_bits =
       MACH_MSGH_BITS_REMOTE(MACH_MSG_TYPE_MAKE_SEND_ONCE);
-  message.header.msgh_remote_port = wakeup_.get();
+  message.header.msgh_id = kWakeupMessageId;
+  message.header.msgh_remote_port = notify_.get();
   kern_return_t kr = mach_msg_send(&message.header);
   if (kr != KERN_SUCCESS) {
     // If ScheduleWork() is being called by other threads faster than the pump
@@ -184,12 +210,13 @@ void MessagePumpKqueue::ScheduleDelayedWork(
   // Nothing to do. This MessagePump uses DoWork().
 }
 
-bool MessagePumpKqueue::WatchMachReceivePort(
-    mach_port_t port, MachPortWatchController* controller,
-    MachPortWatcher* delegate) {
+bool MessagePumpKqueue::WatchMachPort(mach_port_t port, int mode,
+                                      MachPortWatchController* controller,
+                                      MachPortWatcher* delegate) {
   DCHECK(port != MACH_PORT_NULL);
   DCHECK(controller);
   DCHECK(delegate);
+  DCHECK(mode == Mode::WATCH_READ || mode == Mode::WATCH_WRITE);
 
   if (controller->port() != MACH_PORT_NULL) {
     DLOG(ERROR)
@@ -197,19 +224,28 @@ bool MessagePumpKqueue::WatchMachReceivePort(
     return false;
   }
 
-  kevent64_s event{};
-  event.ident = port;
-  event.filter = EVFILT_MACHPORT;
-  event.flags = EV_ADD;
-  int rv = ChangeOneEvent(kqueue_, &event);
-  if (rv < 0) {
-    DLOG(ERROR) << "kevent64";
-    return false;
-  }
-  ++event_count_;
+  if (mode == Mode::WATCH_READ) {
+    kevent64_s event{};
+    event.ident = port;
+    event.filter = EVFILT_MACHPORT;
+    event.flags = EV_ADD;
+    int rv = ChangeOneEvent(kqueue_, &event);
+    if (rv < 0) {
+      DLOG(ERROR) << "kevent64";
+      return false;
+    }
+    ++event_count_;
 
-  controller->Init(this, port, delegate);
-  port_controllers_.InsertOrUpdate(port, controller);
+    controller->Init(this, port, mode, delegate);
+    receive_controllers_.InsertOrUpdate(port, controller);
+  } else if (mode == Mode::WATCH_WRITE) {
+    if (!RequestSendPossibleNotification(notify_.get(), port)) {
+      return false;
+    }
+
+    controller->Init(this, port, mode, delegate);
+    send_controllers_.InsertOrUpdate(port, controller);
+  }
 
   return true;
 }
@@ -266,18 +302,28 @@ bool MessagePumpKqueue::WatchFileDescriptor(int fd, bool persistent, int mode,
 bool MessagePumpKqueue::StopWatchingMachPort(
     MachPortWatchController* controller) {
   mach_port_t port = controller->port();
+  int mode = controller->mode();
   controller->Reset();
-  port_controllers_.Remove(port);
 
-  kevent64_s event{};
-  event.ident = port;
-  event.filter = EVFILT_MACHPORT;
-  event.flags = EV_DELETE;
-  --event_count_;
-  int rv = ChangeOneEvent(kqueue_, &event);
-  if (rv < 0) {
-    DLOG(ERROR) << "kevent64";
-    return false;
+  if (mode == Mode::WATCH_READ) {
+    receive_controllers_.Remove(port);
+
+    kevent64_s event{};
+    event.ident = port;
+    event.filter = EVFILT_MACHPORT;
+    event.flags = EV_DELETE;
+    --event_count_;
+    int rv = ChangeOneEvent(kqueue_, &event);
+    if (rv < 0) {
+      DLOG(ERROR) << "kevent64";
+      return false;
+    }
+  } else if (mode == Mode::WATCH_WRITE) {
+    send_controllers_.Remove(port);
+
+    if (!RequestSendPossibleNotification(MACH_PORT_NULL, port)) {
+      return false;
+    }
   }
 
   return true;
@@ -377,20 +423,57 @@ bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, int count) {
     } else if (event->filter == EVFILT_MACHPORT) {
       mach_port_t port = event->ident;
 
-      if (port == wakeup_.get()) {
-        // The wakeup event has been received, do not treat this as "doing
-        // work", this just wakes up the pump.
+      if (port != notify_.get()) {
+        did_work = true;
+
+        MachPortWatchController* controller = receive_controllers_.Get(port);
+        // The controller could have been removed by some other work callout
+        // before this event could be processed.
+        if (controller) {
+          controller->watcher()->OnMachMessageReceived(port);
+        }
+        continue;
+      }
+
+      // Message received on notify_ port - check for a notification port.
+      mach_msg_id_t id = notify_buffer_.not_header.msgh_id;
+      if (id != MACH_NOTIFY_SEND_POSSIBLE && id != MACH_NOTIFY_DEAD_NAME) {
+        // The wakeup event (or some other event we ignore) has been received,
+        // do not treat this as "doing work", this just wakes up the pump.
+        mach_msg_destroy(&notify_buffer_.not_header);
         continue;
       }
 
       did_work = true;
 
-      MachPortWatchController* controller = port_controllers_.Get(port);
-      // The controller could have been removed by some other work callout
-      // before this event could be processed.
-      if (controller) {
-        controller->watcher()->OnMachMessageReceived(port);
+      // For notifications, the relevant port name is in the `not_port` field.
+      port = notify_buffer_.not_port;
+
+      mach_msg_destroy(&notify_buffer_.not_header);
+      if (id == MACH_NOTIFY_DEAD_NAME) {
+        // MACH_NOTIFY_DEAD_NAME contains a non-attachment dead-name right which
+        // must be deallocated separately from mach_msg_destroy.
+        mach_port_deallocate(mach_task_self(), port);
       }
+
+      MachPortWatchController* controller = send_controllers_.Get(port);
+      if (!controller) {
+        printf_stderr("No controller\n");
+        continue;
+      }
+      MachPortWatcher* port_watcher = controller->watcher();
+
+      // If the port is still alive, request the next notification.
+      bool final = id == MACH_NOTIFY_DEAD_NAME ||
+                   !RequestSendPossibleNotification(notify_.get(), port);
+      if (final) {
+        // If this is the last notification, the Controller needs to stop
+        // tracking, so it is not double-removed.
+        controller->Reset();
+        send_controllers_.Remove(port);
+      }
+
+      port_watcher->OnMachSendPossible(port, final);
     } else if (event->filter == EVFILT_TIMER) {
       // The wakeup timer fired.
       DCHECK(!delayed_work_time_.is_null());

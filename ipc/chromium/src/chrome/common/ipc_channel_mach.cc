@@ -105,8 +105,9 @@ bool ChannelMach::Connect(Listener* listener) {
   }
 
   // Begin listening for messages on our receive port.
-  MessageLoopForIO::current()->WatchMachReceivePort(receive_port_.get(),
-                                                    &watch_controller_, this);
+  MessageLoopForIO::current()->WatchMachPort(receive_port_.get(),
+                                             MessageLoopForIO::WATCH_READ,
+                                             &receive_controller_, this);
 
   return ContinueConnect(nullptr);
 }
@@ -126,6 +127,10 @@ bool ChannelMach::ContinueConnect(mozilla::UniqueMachSendRight send_port) {
   }
 
   waiting_connect_ = false;
+
+  // Begin listening for notifications on our send port.
+  MessageLoopForIO::current()->WatchMachPort(
+      send_port_.get(), MessageLoopForIO::WATCH_WRITE, &send_controller_, this);
 
   return ProcessOutgoingMessages();
 }
@@ -588,9 +593,10 @@ bool ChannelMach::ProcessOutgoingMessages() {
 
     MOZ_ASSERT(send_buffer_has_message_, "Failed to build a message?");
     auto* header = reinterpret_cast<mach_msg_header_t*>(send_buffer_.get());
-    kern_return_t kr = mach_msg(header, MACH_SEND_MSG | MACH_SEND_TIMEOUT,
-                                header->msgh_size, 0, MACH_PORT_NULL,
-                                /* timeout */ 0, MACH_PORT_NULL);
+    kern_return_t kr =
+        mach_msg(header, MACH_SEND_MSG | MACH_SEND_TIMEOUT | MACH_SEND_NOTIFY,
+                 header->msgh_size, 0, MACH_PORT_NULL,
+                 /* timeout */ 0, MACH_PORT_NULL);
     if (kr == KERN_SUCCESS) {
       // Don't clean up the message anymore.
       send_buffer_has_message_ = false;
@@ -606,20 +612,8 @@ bool ChannelMach::ProcessOutgoingMessages() {
       OutputQueuePop();
     } else {
       if (kr == MACH_SEND_TIMED_OUT) {
-        // The message timed out, set up a runnable to re-try the send on the
-        // IPC I/O thread.
-        //
-        // NOTE: It'd be nice to use MACH_NOTIFY_SEND_POSSIBLE here, but using
-        // it naively can lead to port leaks when the port becomes a DEAD_NAME
-        // due to issues in the port subsystem.
-        XRE_GetAsyncIOEventTarget()->Dispatch(NS_NewRunnableFunction(
-            "ChannelMach::Retry", [self = RefPtr{this}]() {
-              mozilla::MutexAutoLock lock(self->SendMutex());
-              self->chan_cap_.NoteLockHeld();
-              if (self->receive_port_) {
-                self->ProcessOutgoingMessages();
-              }
-            }));
+        // We specified `MACH_SEND_NOTIFY`, so we'll be called back when it
+        // becomes possible to send.
         return true;
       }
 
@@ -678,6 +672,20 @@ void ChannelMach::OnMachMessageReceived(mach_port_t port) {
   }
 }
 
+void ChannelMach::OnMachSendPossible(mach_port_t port, bool final) {
+  IOThread().AssertOnCurrentThread();
+  chan_cap_.NoteOnTarget();
+
+  if (receive_port_) {
+    mozilla::ReleasableMutexAutoLock lock(SendMutex());
+    if (final || !ProcessOutgoingMessages()) {
+      CloseLocked();
+      lock.Unlock();
+      listener_->OnChannelError();
+    }
+  }
+}
+
 void ChannelMach::OutputQueuePush(mozilla::UniquePtr<Message> msg) {
   chan_cap_.NoteLockHeld();
 
@@ -709,7 +717,8 @@ void ChannelMach::CloseLocked() {
   // Close can be called multiple times, so we need to make sure we're
   // idempotent.
 
-  watch_controller_.StopWatchingMachPort();
+  receive_controller_.StopWatchingMachPort();
+  send_controller_.StopWatchingMachPort();
   receive_port_ = nullptr;
   send_port_ = nullptr;
 
