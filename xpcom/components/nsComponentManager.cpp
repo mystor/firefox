@@ -135,9 +135,10 @@ bool ProcessSelectorMatches(ProcessSelector aSelector) {
   return true;
 }
 
-static bool gProcessMatchTable[Module::kMaxProcessSelector + 1];
+static std::bitset<Module::kMaxProcessSelector + 1> gProcessMatchTable;
 
 bool FastProcessSelectorMatches(ProcessSelector aSelector) {
+  MOZ_ASSERT(size_t(aSelector) < gProcessMatchTable.size());
   return gProcessMatchTable[size_t(aSelector)];
 }
 
@@ -284,61 +285,11 @@ void nsComponentManagerImpl::InitializeModuleLocations() {
 }
 
 nsresult nsComponentManagerImpl::Init() {
-  {
-    gProcessMatchTable[size_t(ProcessSelector::ANY_PROCESS)] =
-        ProcessSelectorMatches(ProcessSelector::ANY_PROCESS);
-    gProcessMatchTable[size_t(ProcessSelector::MAIN_PROCESS_ONLY)] =
-        ProcessSelectorMatches(ProcessSelector::MAIN_PROCESS_ONLY);
-    gProcessMatchTable[size_t(ProcessSelector::CONTENT_PROCESS_ONLY)] =
-        ProcessSelectorMatches(ProcessSelector::CONTENT_PROCESS_ONLY);
-    gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_GPU_PROCESS)] =
-        ProcessSelectorMatches(ProcessSelector::ALLOW_IN_GPU_PROCESS);
-    gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_VR_PROCESS)] =
-        ProcessSelectorMatches(ProcessSelector::ALLOW_IN_VR_PROCESS);
-    gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_SOCKET_PROCESS)] =
-        ProcessSelectorMatches(ProcessSelector::ALLOW_IN_SOCKET_PROCESS);
-    gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_RDD_PROCESS)] =
-        ProcessSelectorMatches(ProcessSelector::ALLOW_IN_RDD_PROCESS);
-    gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_GMPLUGIN_PROCESS)] =
-        ProcessSelectorMatches(ProcessSelector::ALLOW_IN_GMPLUGIN_PROCESS);
-    gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_GPU_AND_MAIN_PROCESS)] =
-        ProcessSelectorMatches(ProcessSelector::ALLOW_IN_GPU_AND_MAIN_PROCESS);
-    gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_GPU_AND_VR_PROCESS)] =
-        ProcessSelectorMatches(ProcessSelector::ALLOW_IN_GPU_AND_VR_PROCESS);
-    gProcessMatchTable[size_t(
-        ProcessSelector::ALLOW_IN_GPU_AND_SOCKET_PROCESS)] =
-        ProcessSelectorMatches(
-            ProcessSelector::ALLOW_IN_GPU_AND_SOCKET_PROCESS);
-    gProcessMatchTable[size_t(
-        ProcessSelector::ALLOW_IN_GPU_VR_AND_SOCKET_PROCESS)] =
-        ProcessSelectorMatches(
-            ProcessSelector::ALLOW_IN_GPU_VR_AND_SOCKET_PROCESS);
-    gProcessMatchTable[size_t(
-        ProcessSelector::ALLOW_IN_RDD_AND_SOCKET_PROCESS)] =
-        ProcessSelectorMatches(
-            ProcessSelector::ALLOW_IN_RDD_AND_SOCKET_PROCESS);
-    gProcessMatchTable[size_t(
-        ProcessSelector::ALLOW_IN_GPU_RDD_AND_SOCKET_PROCESS)] =
-        ProcessSelectorMatches(
-            ProcessSelector::ALLOW_IN_GPU_RDD_AND_SOCKET_PROCESS);
-    gProcessMatchTable[size_t(
-        ProcessSelector::ALLOW_IN_GPU_RDD_SOCKET_AND_UTILITY_PROCESS)] =
-        ProcessSelectorMatches(
-            ProcessSelector::ALLOW_IN_GPU_RDD_SOCKET_AND_UTILITY_PROCESS);
-    gProcessMatchTable[size_t(
-        ProcessSelector::ALLOW_IN_GPU_RDD_VR_AND_SOCKET_PROCESS)] =
-        ProcessSelectorMatches(
-            ProcessSelector::ALLOW_IN_GPU_RDD_VR_AND_SOCKET_PROCESS);
-    gProcessMatchTable[size_t(
-        ProcessSelector::ALLOW_IN_GPU_RDD_VR_SOCKET_AND_UTILITY_PROCESS)] =
-        ProcessSelectorMatches(
-            ProcessSelector::ALLOW_IN_GPU_RDD_VR_SOCKET_AND_UTILITY_PROCESS);
-    gProcessMatchTable[size_t(
-        ProcessSelector::
-            ALLOW_IN_GPU_RDD_VR_SOCKET_UTILITY_AND_GMPLUGIN_PROCESS)] =
-        ProcessSelectorMatches(
-            ProcessSelector::
-                ALLOW_IN_GPU_RDD_VR_SOCKET_UTILITY_AND_GMPLUGIN_PROCESS);
+  // NOTE: It's unclear if this table actually improves the performance of
+  // component creation over the logic in ProcessSelectorMatches.
+  for (size_t i = 0; i < gProcessMatchTable.size(); ++i) {
+    gProcessMatchTable[i] =
+        ProcessSelectorMatches(static_cast<ProcessSelector>(i));
   }
 
   MOZ_ASSERT(NOT_INITIALIZED == mStatus);
