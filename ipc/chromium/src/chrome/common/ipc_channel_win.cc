@@ -25,6 +25,7 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/LateWriteChecks.h"
 #include "mozilla/RandomNum.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "nsThreadUtils.h"
 
 using namespace mozilla::ipc;
@@ -592,6 +593,40 @@ static HANDLE Uint32ToHandle(uint32_t h) {
       static_cast<uintptr_t>(static_cast<int32_t>(h)));
 }
 
+static bool CheckAllowedHandleType(HANDLE handle) {
+  if (!mozilla::StaticPrefs::dom_ipc_handle_type_restrictions_enabled()) {
+    return true;
+  }
+
+  // Use a buffer large enough to contain at least 32 characters. This is larger
+  // than the largest type name we allow.
+  struct {
+    PUBLIC_OBJECT_TYPE_INFORMATION type_info;
+    wchar_t extra_space[32];
+  } buffer;
+
+  DWORD status = ::NtQueryObject(handle, ObjectTypeInformation,
+                                 &buffer.type_info, sizeof(buffer), nullptr);
+  if (NS_WARN_IF(status != STATUS_SUCCESS)) {
+    CHROMIUM_LOG(ERROR) << "Failed to query ObjectTypeInformation";
+    return false;
+  }
+
+  // Check if it is one of the allowed types.
+  nsDependentString type_name(
+      buffer.type_info.TypeName.Buffer,
+      buffer.type_info.TypeName.Length / sizeof(wchar_t));
+  if (type_name == u"Section"_ns || type_name == u"File"_ns ||
+      type_name == u"Directory"_ns || type_name == u"Event"_ns ||
+      type_name == u"DxgkSharedResource"_ns) {
+    return true;
+  }
+
+  CHROMIUM_LOG(ERROR) << "Cannot transfer disallowed handle type: "
+                      << NS_ConvertUTF16toUTF8(type_name).get();
+  return false;
+}
+
 bool Channel::ChannelImpl::AcceptHandles(Message& msg) {
   chan_cap_.NoteOnTarget();
 
@@ -655,6 +690,12 @@ bool Channel::ChannelImpl::AcceptHandles(Message& msg) {
         }
         return false;
       }
+
+      if (!CheckAllowedHandleType(local_handle.get())) {
+        CHROMIUM_LOG(ERROR)
+            << "Cannot accept disallowed handle type from child process";
+        return false;
+      }
     } else {
       local_handle.reset(ipc_handle);
     }
@@ -716,6 +757,13 @@ bool Channel::ChannelImpl::TransferHandles(Message& msg) {
         CHROMIUM_LOG(ERROR) << "other_process_ is invalid in TransferHandles";
         return false;
       }
+
+      if (!CheckAllowedHandleType(local_handle.get())) {
+        CHROMIUM_LOG(ERROR)
+            << "Cannot transfer disallowed handle type into child process";
+        return false;
+      }
+
       if (!DuplicateRealHandle(GetCurrentProcess(), local_handle.get(),
                                other_process_, &ipc_handle, 0, FALSE,
                                DUPLICATE_SAME_ACCESS)) {
