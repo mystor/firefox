@@ -85,6 +85,12 @@
 #  define MOZ_HAS_CLANG_ATTRIBUTE(attr) 0
 #endif
 
+#if defined(__has_cpp_attribute)
+#  define MOZ_HAS_CPP_ATTRIBUTE(attr) __has_cpp_attribute(attr)
+#else
+#  define MOZ_HAS_CPP_ATTRIBUTE(attr) 0
+#endif
+
 /*
  * When built with clang analyzer (a.k.a scan-build), define MOZ_HAVE_NORETURN
  * to mark some false positives
@@ -436,12 +442,8 @@
  *
  * See: https://clang.llvm.org/docs/AttributeReference.html#owner
  */
-#if defined(__clang__) && defined(__has_cpp_attribute)
-#  if __has_cpp_attribute(gsl::Owner)
-#    define MOZ_GSL_OWNER [[gsl::Owner]]
-#  else
-#    define MOZ_GSL_OWNER /* nothing */
-#  endif
+#if defined(__clang__) && MOZ_HAS_CPP_ATTRIBUTE(gsl::Owner)
+#  define MOZ_GSL_OWNER [[gsl::Owner]]
 #else
 #  define MOZ_GSL_OWNER /* nothing */
 #endif
@@ -453,12 +455,8 @@
  *
  * See: https://clang.llvm.org/docs/AttributeReference.html#pointer
  */
-#if defined(__clang__) && defined(__has_cpp_attribute)
-#  if __has_cpp_attribute(gsl::Pointer)
-#    define MOZ_GSL_POINTER [[gsl::Pointer]]
-#  else
-#    define MOZ_GSL_POINTER /* nothing */
-#  endif
+#if defined(__clang__) && MOZ_HAS_CPP_ATTRIBUTE(gsl::Pointer)
+#  define MOZ_GSL_POINTER [[gsl::Pointer]]
 #else
 #  define MOZ_GSL_POINTER /* nothing */
 #endif
@@ -470,12 +468,8 @@
  * constructed object).
  * See: https://clang.llvm.org/docs/AttributeReference.html#lifetimebound
  */
-#if defined(__clang__) && defined(__has_cpp_attribute)
-#  if __has_cpp_attribute(clang::lifetimebound)
-#    define MOZ_LIFETIME_BOUND [[clang::lifetimebound]]
-#  else
-#    define MOZ_LIFETIME_BOUND /* nothing */
-#  endif
+#if defined(__clang__) && MOZ_HAS_CPP_ATTRIBUTE(clang::lifetimebound)
+#  define MOZ_LIFETIME_BOUND [[clang::lifetimebound]]
 #else
 #  define MOZ_LIFETIME_BOUND /* nothing */
 #endif
@@ -485,12 +479,8 @@
  * by that parameter may also be referred to by x.
  * See: https://clang.llvm.org/docs/AttributeReference.html#lifetime-capture-by
  */
-#if defined(__clang__) && defined(__has_cpp_attribute)
-#  if __has_cpp_attribute(clang::lifetime_capture_by)
-#    define MOZ_LIFETIME_CAPTURE_BY(x) [[clang::lifetime_capture_by(x)]]
-#  else
-#    define MOZ_LIFETIME_CAPTURE_BY(x) /* nothing */
-#  endif
+#if defined(__clang__) && MOZ_HAS_CPP_ATTRIBUTE(clang::lifetime_capture_by)
+#  define MOZ_LIFETIME_CAPTURE_BY(x) [[clang::lifetime_capture_by(x)]]
 #else
 #  define MOZ_LIFETIME_CAPTURE_BY(x) /* nothing */
 #endif
@@ -1094,6 +1084,21 @@
 #  define MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA MOZ_CAN_RUN_SCRIPT_BOUNDARY
 #else
 #  define MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA
+#endif
+
+/**
+ * Allow a non-static data member to not have a unique address.
+ * This can be used to avoid allocating memory for empty members.
+ */
+#if defined(_MSC_VER) && _MSC_VER >= 1929
+// NOTE: MSVC and clang-cl disable no_unique_address for ABI compatibility
+// between the same header compiled with both c++17 and c++20.
+// [[msvc::no_unique_address]] provides the desired optimization in c++17.
+#  define MOZ_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#elif MOZ_HAS_CPP_ATTRIBUTE(no_unique_address)
+#  define MOZ_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#else
+#  define MOZ_NO_UNIQUE_ADDRESS /* nothing */
 #endif
 
 #endif /* mozilla_Attributes_h */

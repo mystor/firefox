@@ -6,6 +6,7 @@
 
 UNIFIED_SOURCES += [
     "TestBuffer.cpp",
+    "TestFilterIterator.cpp",
     "TestLinkedList.cpp",
     "TestReverseIterator.cpp",
     "TestSpan.cpp",

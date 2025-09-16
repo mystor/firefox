@@ -8,6 +8,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Try.h"
+#include "mozilla/Variant.h"
 #include "nsCOMPtr.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsTArray.h"
@@ -19,41 +20,57 @@
 template <class T>
 class nsMaybeWeakPtr {
  public:
-  nsMaybeWeakPtr() = default;
-  explicit nsMaybeWeakPtr(T* aRef) : mPtr(aRef), mWeak(false) {}
-  explicit nsMaybeWeakPtr(const nsCOMPtr<nsIWeakReference>& aRef)
-      : mPtr(aRef), mWeak(true) {}
+  nsMaybeWeakPtr() : mPtr(mozilla::VariantType<nsCOMPtr<T>>{}, nullptr) {}
+  explicit nsMaybeWeakPtr(std::nullptr_t)
+      : mPtr(mozilla::VariantType<nsCOMPtr<T>>{}, nullptr) {}
+  explicit nsMaybeWeakPtr(T* aRef)
+      : mPtr(mozilla::VariantType<nsCOMPtr<T>>{}, aRef) {}
+  explicit nsMaybeWeakPtr(const nsWeakPtr& aRef)
+      : mPtr(mozilla::VariantType<nsWeakPtr>{}, aRef) {}
 
-  nsMaybeWeakPtr<T>& operator=(T* aRef) {
-    mPtr = aRef;
-    mWeak = false;
+  nsMaybeWeakPtr& operator=(std::nullptr_t) {
+    mPtr.template emplace<nsCOMPtr<T>>(nullptr);
     return *this;
   }
 
-  nsMaybeWeakPtr<T>& operator=(const nsCOMPtr<nsIWeakReference>& aRef) {
-    mPtr = aRef;
-    mWeak = true;
+  nsMaybeWeakPtr<T>& operator=(T* aRef) {
+    mPtr.template emplace<nsCOMPtr<T>>(aRef);
     return *this;
+  }
+
+  nsMaybeWeakPtr<T>& operator=(const nsWeakPtr& aRef) {
+    mPtr.template emplace<nsWeakPtr>(aRef);
+    return *this;
+  }
+
+  bool operator==(std::nullptr_t) const {
+    return !IsWeak() && !mPtr.template as<nsCOMPtr<T>>();
   }
 
   bool operator==(const nsMaybeWeakPtr<T>& aOther) const {
     return mPtr == aOther.mPtr;
   }
 
-  bool operator==(T* const& aStrong) const { return !mWeak && mPtr == aStrong; }
-
-  bool operator==(const nsCOMPtr<nsIWeakReference>& aWeak) const {
-    return mWeak && mPtr == aWeak;
+  bool operator==(T* const& aStrong) const {
+    return !IsWeak() && mPtr.template as<nsCOMPtr<T>>() == aStrong;
   }
 
-  nsISupports* GetRawValue() const { return mPtr.get(); }
-  bool IsWeak() const { return mWeak; }
+  bool operator==(const nsWeakPtr& aWeak) const {
+    return IsWeak() && mPtr.template as<nsWeakPtr>() == aWeak;
+  }
+
+  nsISupports* GetRawValue() const {
+    if (IsWeak()) {
+      return mPtr.template as<nsWeakPtr>().get();
+    }
+    return mPtr.template as<nsCOMPtr<T>>().get();
+  }
+  bool IsWeak() const { return mPtr.template is<nsWeakPtr>(); }
 
   nsCOMPtr<T> GetValue() const;
 
  private:
-  nsCOMPtr<nsISupports> mPtr;
-  bool mWeak = false;
+  mozilla::Variant<nsCOMPtr<T>, nsWeakPtr> mPtr;
 };
 
 // nsMaybeWeakPtrArray is an array of MaybeWeakPtr objects, that knows how to
@@ -124,25 +141,19 @@ class nsMaybeWeakPtrArray : public CopyableTArray<nsMaybeWeakPtr<T>> {
 
 template <class T>
 nsCOMPtr<T> nsMaybeWeakPtr<T>::GetValue() const {
-  if (!mPtr) {
-    return nullptr;
-  }
-
   nsCOMPtr<T> ref;
-  nsresult rv;
-
-  if (mWeak) {
-    nsCOMPtr<nsIWeakReference> weakRef = do_QueryInterface(mPtr);
+  if (IsWeak()) {
+    const nsWeakPtr& weakRef = mPtr.template as<nsWeakPtr>();
     if (NS_WARN_IF(!weakRef)) {
       return nullptr;
     }
+
+    nsresult rv;
     ref = do_QueryReferent(weakRef, &rv);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv) || rv == NS_ERROR_NULL_POINTER,
                          "QueryReferent failed with non-null pointer");
   } else {
-    ref = do_QueryInterface(mPtr, &rv);
-    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                         "QueryInterface failed with non-null pointer");
+    ref = mPtr.template as<nsCOMPtr<T>>();
   }
   return ref;
 }

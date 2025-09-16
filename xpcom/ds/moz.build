@@ -99,6 +99,7 @@ EXPORTS.mozilla += [
     "SimpleEnumerator.h",
     "StickyTimeDuration.h",
     "Tokenizer.h",
+    "TombstoneArray.h",
 ]
 
 UNIFIED_SOURCES += [
