@@ -22,6 +22,7 @@ UNIFIED_SOURCES += [
     "TestEscape.cpp",
     "TestEventPriorities.cpp",
     "TestEventTargetQI.cpp",
+    "TestFuture.cpp",
     "TestGCPostBarriers.cpp",
     "TestHex.cpp",
     "TestID.cpp",
