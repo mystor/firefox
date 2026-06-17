@@ -31,8 +31,6 @@ class nsISupports;
 
 namespace mozilla {
 
-using detail::Any;
-
 /******************************************************************************
  * mozilla::EditorCommand
  ******************************************************************************/
@@ -67,8 +65,8 @@ nsresult EditorCommand::DoCommand(const nsACString& aCommandName,
     return rv;
   }
 
-  if (Any(paramType & EditorCommandParamType::Bool)) {
-    if (Any(paramType & EditorCommandParamType::StateAttribute)) {
+  if (paramType & EditorCommandParamType::Bool) {
+    if (paramType & EditorCommandParamType::StateAttribute) {
       Maybe<bool> boolParam = Nothing();
       if (params) {
         ErrorResult error;
@@ -90,8 +88,8 @@ nsresult EditorCommand::DoCommand(const nsACString& aCommandName,
 
   // Special case for MultiStateCommandBase.  It allows both CString and String
   // in STATE_ATTRIBUTE and CString is preferred.
-  if (Any(paramType & EditorCommandParamType::CString) &&
-      Any(paramType & EditorCommandParamType::String)) {
+  if ((paramType & EditorCommandParamType::CString) &&
+      (paramType & EditorCommandParamType::String)) {
     if (!params) {
       nsresult rv =
           DoCommandParam(command, VoidString(),
@@ -101,7 +99,7 @@ nsresult EditorCommand::DoCommand(const nsACString& aCommandName,
                            "nsIControllerCommand::DoCommandParams()");
       return rv;
     }
-    if (Any(paramType & EditorCommandParamType::StateAttribute)) {
+    if (paramType & EditorCommandParamType::StateAttribute) {
       nsCString cStringParam;
       nsresult rv = params->GetCString(STATE_ATTRIBUTE, cStringParam);
       if (NS_SUCCEEDED(rv)) {
@@ -130,7 +128,7 @@ nsresult EditorCommand::DoCommand(const nsACString& aCommandName,
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  if (Any(paramType & EditorCommandParamType::CString)) {
+  if (paramType & EditorCommandParamType::CString) {
     if (!params) {
       nsresult rv =
           DoCommandParam(command, VoidCString(),
@@ -140,7 +138,7 @@ nsresult EditorCommand::DoCommand(const nsACString& aCommandName,
           "Failed to do command from nsIControllerCommand::DoCommandParams()");
       return rv;
     }
-    if (Any(paramType & EditorCommandParamType::StateAttribute)) {
+    if (paramType & EditorCommandParamType::StateAttribute) {
       nsCString cStringParam;
       nsresult rv = params->GetCString(STATE_ATTRIBUTE, cStringParam);
       if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -157,7 +155,7 @@ nsresult EditorCommand::DoCommand(const nsACString& aCommandName,
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  if (Any(paramType & EditorCommandParamType::String)) {
+  if (paramType & EditorCommandParamType::String) {
     if (!params) {
       nsresult rv =
           DoCommandParam(command, VoidString(),
@@ -168,12 +166,12 @@ nsresult EditorCommand::DoCommand(const nsACString& aCommandName,
       return rv;
     }
     nsString stringParam;
-    if (Any(paramType & EditorCommandParamType::StateAttribute)) {
+    if (paramType & EditorCommandParamType::StateAttribute) {
       nsresult rv = params->GetString(STATE_ATTRIBUTE, stringParam);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return rv;
       }
-    } else if (Any(paramType & EditorCommandParamType::StateData)) {
+    } else if (paramType & EditorCommandParamType::StateData) {
       nsresult rv = params->GetString(STATE_DATA, stringParam);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return rv;
@@ -190,7 +188,7 @@ nsresult EditorCommand::DoCommand(const nsACString& aCommandName,
     return rv;
   }
 
-  if (Any(paramType & EditorCommandParamType::Transferable)) {
+  if (paramType & EditorCommandParamType::Transferable) {
     nsCOMPtr<nsITransferable> transferable;
     if (params) {
       nsCOMPtr<nsISupports> supports = params->GetISupports("transferable");

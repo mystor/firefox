@@ -246,8 +246,8 @@ UniquePtr<TrackInfo> HLSTrackDemuxer::GetInfo() const {
 RefPtr<HLSTrackDemuxer::SeekPromise> HLSTrackDemuxer::Seek(
     const TimeUnit& aTime) {
   MOZ_ASSERT(mParent, "Called after BreackCycle()");
-  return InvokeAsync<TimeUnit&&>(mParent->GetTaskQueue(), this, __func__,
-                                 &HLSTrackDemuxer::DoSeek, aTime);
+  return InvokeAsync<TimeUnit>(mParent->GetTaskQueue(), this, __func__,
+                               &HLSTrackDemuxer::DoSeek, aTime);
 }
 
 RefPtr<HLSTrackDemuxer::SeekPromise> HLSTrackDemuxer::DoSeek(

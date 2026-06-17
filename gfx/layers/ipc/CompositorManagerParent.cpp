@@ -67,7 +67,7 @@ bool CompositorManagerParent::Create(
       aChildId, aNamespace, aContentBridgeNamespace);
 
   RefPtr<Runnable> runnable =
-      NewRunnableMethod<Endpoint<PCompositorManagerParent>&&, bool>(
+      NewRunnableMethod<Endpoint<PCompositorManagerParent>, bool>(
           "CompositorManagerParent::Bind", bridge,
           &CompositorManagerParent::Bind, std::move(aEndpoint), aIsRoot);
   CompositorThread()->Dispatch(runnable.forget());

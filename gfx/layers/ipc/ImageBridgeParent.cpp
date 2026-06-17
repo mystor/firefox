@@ -107,7 +107,7 @@ bool ImageBridgeParent::CreateForGPUProcess(
       new ImageBridgeParent(compositorThread, aEndpoint.OtherEndpointProcInfo(),
                             dom::ContentParentId(), aNamespace);
 
-  compositorThread->Dispatch(NewRunnableMethod<Endpoint<PImageBridgeParent>&&>(
+  compositorThread->Dispatch(NewRunnableMethod<Endpoint<PImageBridgeParent>>(
       "layers::ImageBridgeParent::Bind", parent, &ImageBridgeParent::Bind,
       std::move(aEndpoint)));
 
@@ -239,7 +239,7 @@ bool ImageBridgeParent::CreateForContent(
   RefPtr<ImageBridgeParent> bridge =
       new ImageBridgeParent(compositorThread, aEndpoint.OtherEndpointProcInfo(),
                             aContentId, aNamespace);
-  compositorThread->Dispatch(NewRunnableMethod<Endpoint<PImageBridgeParent>&&>(
+  compositorThread->Dispatch(NewRunnableMethod<Endpoint<PImageBridgeParent>>(
       "layers::ImageBridgeParent::Bind", bridge, &ImageBridgeParent::Bind,
       std::move(aEndpoint)));
 

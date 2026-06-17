@@ -3246,7 +3246,7 @@ class PresShell final : public nsStubDocumentObserver,
       VisibleFrames& aFrames,
       const Maybe<OnNonvisible>& aNonvisibleAction = Nothing());
 
-  nsRevocableEventPtr<nsRunnableMethod<PresShell>>
+  nsRevocableEventPtr<CancelableRunnable>
       mUpdateApproximateFrameVisibilityEvent;
 
   // A set of frames that were visible or could be visible soon at the time

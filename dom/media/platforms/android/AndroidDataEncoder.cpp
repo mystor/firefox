@@ -395,8 +395,8 @@ void AndroidDataEncoder::ProcessOutput(
     java::SampleBuffer::GlobalRef&& aBuffer) {
   if (!mTaskQueue->IsCurrentThreadIn()) {
     nsresult rv =
-        mTaskQueue->Dispatch(NewRunnableMethod<java::Sample::GlobalRef&&,
-                                               java::SampleBuffer::GlobalRef&&>(
+        mTaskQueue->Dispatch(NewRunnableMethod<java::Sample::GlobalRef,
+                                               java::SampleBuffer::GlobalRef>(
             "AndroidDataEncoder::ProcessOutput", this,
             &AndroidDataEncoder::ProcessOutput, std::move(aSample),
             std::move(aBuffer)));

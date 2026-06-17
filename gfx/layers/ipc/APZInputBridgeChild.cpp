@@ -32,7 +32,7 @@ RefPtr<APZInputBridgeChild> APZInputBridgeChild::Create(
   MOZ_ASSERT(APZThreadUtils::IsControllerThreadAlive());
 
   APZThreadUtils::RunOnControllerThread(
-      NewRunnableMethod<Endpoint<PAPZInputBridgeChild>&&>(
+      NewRunnableMethod<Endpoint<PAPZInputBridgeChild>>(
           "layers::APZInputBridgeChild::Open", child,
           &APZInputBridgeChild::Open, std::move(aEndpoint)));
 

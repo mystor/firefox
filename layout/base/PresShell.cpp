@@ -6589,9 +6589,9 @@ void PresShell::ScheduleApproximateFrameVisibilityUpdateNow() {
     return;
   }
 
-  RefPtr<nsRunnableMethod<PresShell>> event =
-      NewRunnableMethod("PresShell::UpdateApproximateFrameVisibility", this,
-                        &PresShell::UpdateApproximateFrameVisibility);
+  RefPtr<CancelableRunnable> event = NewCancelableRunnableMethod(
+      "PresShell::UpdateApproximateFrameVisibility", this,
+      &PresShell::UpdateApproximateFrameVisibility);
   nsresult rv = mDocument->Dispatch(do_AddRef(event));
 
   if (NS_SUCCEEDED(rv)) {

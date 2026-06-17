@@ -41,11 +41,10 @@ RemoteContentController::~RemoteContentController() = default;
 void RemoteContentController::NotifyLayerTransforms(
     nsTArray<MatrixMessage>&& aTransforms) {
   if (!NS_IsMainThread()) {
-    NS_DispatchToMainThread(
-        NewRunnableMethod<StoreCopyPassByRRef<nsTArray<MatrixMessage>>>(
-            "layers::RemoteContentController::NotifyLayerTransforms", this,
-            &RemoteContentController::NotifyLayerTransforms,
-            std::move(aTransforms)));
+    NS_DispatchToMainThread(NewRunnableMethod<nsTArray<MatrixMessage>>(
+        "layers::RemoteContentController::NotifyLayerTransforms", this,
+        &RemoteContentController::NotifyLayerTransforms,
+        std::move(aTransforms)));
     return;
   }
 

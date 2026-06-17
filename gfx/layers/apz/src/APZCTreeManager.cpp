@@ -2687,8 +2687,7 @@ void APZCTreeManager::SetTargetAPZC(
     uint64_t aInputBlockId, const nsTArray<ScrollableLayerGuid>& aTargets) {
   if (!APZThreadUtils::IsControllerThread()) {
     APZThreadUtils::RunOnControllerThread(
-        NewRunnableMethod<uint64_t,
-                          StoreCopyPassByRRef<nsTArray<ScrollableLayerGuid>>>(
+        NewRunnableMethod<uint64_t, nsTArray<ScrollableLayerGuid>>(
             "layers::APZCTreeManager::SetTargetAPZC", this,
             &layers::APZCTreeManager::SetTargetAPZC, aInputBlockId,
             aTargets.Clone()));

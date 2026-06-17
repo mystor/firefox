@@ -1121,7 +1121,6 @@ class nsPresContext : public nsISupports,
 
  protected:
   void DoUpdateHiddenByContentVisibilityForAnimations();
-  friend class nsRunnableMethod<nsPresContext>;
   MOZ_CAN_RUN_SCRIPT void ThemeChangedInternal();
   void RefreshSystemMetrics();
 
