@@ -20312,7 +20312,7 @@ Document::CreatePermissionGrantPromise(nsPIDOMWindowInner* aInnerWindow,
         },
         [p](mozilla::ipc::ResponseRejectReason aError) {
           p->Reject(false, __func__);
-          return p;
+          return;
         });
 
     return p;

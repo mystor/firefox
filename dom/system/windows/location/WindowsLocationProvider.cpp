@@ -102,9 +102,8 @@ bool WindowsLocationProvider::WhenActorIsReady(Fn&& fn) {
         GetCurrentSerialEventTarget(), __func__,
         [fn](const RefPtr<WindowsLocationParent>& actor) {
           (void)fn(actor.get());
-          return actor;
         },
-        [](bool) { return false; });
+        [](bool) {});
     return true;
   }
 

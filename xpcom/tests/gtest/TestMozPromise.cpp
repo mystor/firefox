@@ -101,6 +101,8 @@ void RunOnTaskQueue(TaskQueue* aQueue, FunctionType aFun) {
     return TestPromise::CreateAndReject(0, __func__); \
   }
 
+#define DO_FAIL_VOID []() { EXPECT_TRUE(false); }
+
 TEST(MozPromise, BasicResolve)
 {
   AutoTaskQueue atq;
@@ -113,7 +115,7 @@ TEST(MozPromise, BasicResolve)
               EXPECT_EQ(aResolveValue, 42);
               queue->BeginShutdown();
             },
-            DO_FAIL);
+            DO_FAIL_VOID);
   });
 }
 
@@ -123,10 +125,11 @@ TEST(MozPromise, BasicReject)
   RefPtr<TaskQueue> queue = atq.Queue();
   RunOnTaskQueue(queue, [queue]() -> void {
     TestPromise::CreateAndReject(42.0, __func__)
-        ->Then(queue, __func__, DO_FAIL, [queue](int aRejectValue) -> void {
-          EXPECT_EQ(aRejectValue, 42.0);
-          queue->BeginShutdown();
-        });
+        ->Then(queue, __func__, DO_FAIL_VOID,
+               [queue](int aRejectValue) -> void {
+                 EXPECT_EQ(aRejectValue, 42.0);
+                 queue->BeginShutdown();
+               });
   });
 }
 
@@ -198,7 +201,7 @@ TEST(MozPromise, AsyncResolve)
           c->Cancel();
           queue->BeginShutdown();
         },
-        DO_FAIL);
+        DO_FAIL_VOID);
   });
 }
 
@@ -239,7 +242,7 @@ TEST(MozPromise, CompletionPromises)
                                                   __func__);
             },
             DO_FAIL)
-        ->Then(queue, __func__, DO_FAIL,
+        ->Then(queue, __func__, DO_FAIL_VOID,
                [queue, &invokedPass](double aVal) -> void {
                  EXPECT_EQ(aVal, 42.0);
                  EXPECT_TRUE(invokedPass);
@@ -457,7 +460,7 @@ TEST(MozPromise, Chaining)
               holder.Disconnect();
               queue->BeginShutdown();
             },
-            DO_FAIL);
+            DO_FAIL_VOID);
       }
     }
     // We will hit the assertion if we don't disconnect the leaf Request
@@ -579,7 +582,7 @@ TEST(MozPromise, XPCOMEventTarget)
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
           [](int aResolveValue) -> void { EXPECT_EQ(aResolveValue, 42); },
-          DO_FAIL);
+          DO_FAIL_VOID);
 
   // Spin the event loop.
   NS_ProcessPendingEvents(nullptr);
@@ -591,7 +594,7 @@ TEST(MozPromise, MessageLoopEventTarget)
       ->Then(
           MessageLoop::current()->SerialEventTarget(), __func__,
           [](int aResolveValue) -> void { EXPECT_EQ(aResolveValue, 42); },
-          DO_FAIL);
+          DO_FAIL_VOID);
 
   // Spin the event loop.
   NS_ProcessPendingEvents(nullptr);
@@ -604,7 +607,7 @@ TEST(MozPromise, ChainTo)
   promise2->Then(
       GetCurrentSerialEventTarget(), __func__,
       [&](int aResolveValue) -> void { EXPECT_EQ(aResolveValue, 42); },
-      DO_FAIL);
+      DO_FAIL_VOID);
 
   promise1->ChainTo(promise2.forget(), __func__);
 
@@ -625,7 +628,7 @@ TEST(MozPromise, SynchronousTaskDispatch1)
         EXPECT_EQ(aResolveValue, 42);
         value = true;
       },
-      DO_FAIL);
+      DO_FAIL_VOID);
   EXPECT_EQ(value, true);
 }
 
@@ -640,7 +643,7 @@ TEST(MozPromise, SynchronousTaskDispatch2)
         EXPECT_EQ(aResolveValue, 42);
         value = true;
       },
-      DO_FAIL);
+      DO_FAIL_VOID);
   EXPECT_EQ(value, false);
   promise->Resolve(42, __func__);
   EXPECT_EQ(value, true);
@@ -672,7 +675,7 @@ TEST(MozPromise, DirectTaskDispatch)
           EXPECT_EQ(value2, false);
           value1 = true;
         },
-        DO_FAIL);
+        DO_FAIL_VOID);
     EXPECT_EQ(value1, false);
   }));
 
@@ -718,7 +721,7 @@ TEST(MozPromise, ChainedDirectTaskDispatch)
               EXPECT_EQ(value2, false);
               value1 = true;
             },
-            DO_FAIL);
+            DO_FAIL_VOID);
     EXPECT_EQ(value1, false);
   }));
 
@@ -752,7 +755,7 @@ TEST(MozPromise, ChainToDirectTaskDispatch)
           EXPECT_EQ(value2, false);
           value1 = true;
         },
-        DO_FAIL);
+        DO_FAIL_VOID);
 
     promise1->ChainTo(promise2.forget(), __func__);
     EXPECT_EQ(value1, false);
@@ -977,3 +980,4 @@ TEST(MozPromise, ObjectDestructionOrder)
 }
 
 #undef DO_FAIL
+#undef DO_FAIL_VOID
