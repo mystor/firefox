@@ -879,6 +879,34 @@ TEST(MozPromise, RequireTailDispatchWithoutSupportDeathTest)
   NS_ProcessPendingEvents(nullptr);
 }
 
+TEST(MozPromise, FallibleThenOnShutdownTarget)
+{
+  // NOTE: There are no assertions in this test, this test is instead just
+  // ensuring that we don't hit an assertion failure while executing the test.
+  AutoTaskQueue atq;
+  RefPtr<TaskQueue> queue = atq.Queue();
+
+  RefPtr promise = MakeRefPtr<TestPromise::Private>(__func__);
+  promise
+      ->Then(
+          queue, __func__,
+          [](auto&&) -> RefPtr<TestPromise> { MOZ_CRASH("unreached"); },
+          NS_DISPATCH_FALLIBLE)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [&](auto&&) { MOZ_CRASH("unreached"); }, NS_DISPATCH_FALLIBLE);
+
+  // Shut down the queue before resolving promise.
+  queue->BeginShutdown();
+  queue->AwaitShutdownAndIdle();
+
+  // Resolving the promise should not trigger assertions.
+  promise->Resolve(42, __func__);
+
+  // Spin the event loop to ensure the chained callback is never executed.
+  NS_ProcessPendingEvents(nullptr);
+}
+
 TEST(MozPromise, Map)
 {
   int value = 0;

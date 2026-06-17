@@ -132,6 +132,31 @@ using OptArgInvokeResult =
  *
  * When IsExclusive is true, the MozPromise does a release-mode assertion that
  * there is at most one call to either Then(...) or ChainTo(...).
+ *
+ * Thread Safety & Dispatch Failures
+ * =================================
+ *
+ * A MozPromise **MUST** be either resolved or rejected before it is destroyed,
+ * and callbacks attached to a MozPromise with ->Then() are therefore required
+ * to be executed and destroyed on the specified event target.
+ *
+ * This requirement can be relaxed in 2 ways:
+ *
+ *   (1) Individual calls to ->Then() can pass NS_DISPATCH_FALLIBLE. If this
+ *       flag is passed, we will not assert if the callback is never called due
+ *       to a Dispatch failure, and the callback may be destroyed on any thread.
+ *
+ *       Note that NS_DISPATCH_FALLIBLE is not transitive, and downstream
+ *       callbacks due to ->Then() chaining may still assert if they are not
+ *       executed before shutdown.
+ *
+ *   (2) Callers may ->Track() a returned MozPromise::Request, and later call
+ *       Disconnect() on the target thread (e.g. before it goes away) to safely
+ *       disarm the callback.
+ *
+ * Relaxing the requirements in these ways does not relax the requirement that
+ * the root MozPromise must be resolved or rejected, however it does allow
+ * avoiding issues around dispatch failure during shutdown.
  */
 
 class MozPromiseRefcountable {
@@ -288,7 +313,8 @@ class MozPromise : public MozPromiseBase {
   class AllPromiseHolder : public MozPromiseRefcountable {
    public:
     explicit AllPromiseHolder(size_t aDependentPromises)
-        : mPromise(new typename AllPromiseType::Private(__func__)),
+        : mPromise(new typename AllPromiseType::Private(
+              __func__, true /* aIsCompletionPromise */)),
           mOutstandingPromises(aDependentPromises) {
       MOZ_ASSERT(aDependentPromises > 0);
       mResolveValues.SetLength(aDependentPromises);
@@ -348,7 +374,8 @@ class MozPromise : public MozPromiseBase {
   class AllSettledPromiseHolder : public MozPromiseRefcountable {
    public:
     explicit AllSettledPromiseHolder(size_t aDependentPromises)
-        : mPromise(new typename AllSettledPromiseType::Private(__func__)),
+        : mPromise(new typename AllSettledPromiseType::Private(
+              __func__, true /* aIsCompletionPromise */)),
           mOutstandingPromises(aDependentPromises) {
       MOZ_ASSERT(aDependentPromises > 0);
       mValues.SetLength(aDependentPromises);
@@ -385,7 +412,8 @@ class MozPromise : public MozPromiseBase {
  public:
   [[nodiscard]] static RefPtr<AllPromiseType> All(
       nsISerialEventTarget* aProcessingTarget,
-      nsTArray<RefPtr<MozPromise>>& aPromises) {
+      nsTArray<RefPtr<MozPromise>>& aPromises,
+      nsIEventTarget::DispatchFlags aDispatchFlags = NS_DISPATCH_NORMAL) {
     if (aPromises.Length() == 0) {
       return AllPromiseType::CreateAndResolve(
           CopyableTArray<ResolveValueType>(), __func__);
@@ -401,14 +429,16 @@ class MozPromise : public MozPromiseBase {
           },
           [holder](RejectValueTypeParam aRejectValue) -> void {
             holder->Reject(MaybeMove(aRejectValue));
-          });
+          },
+          aDispatchFlags);
     }
     return promise;
   }
 
   [[nodiscard]] static RefPtr<AllSettledPromiseType> AllSettled(
       nsISerialEventTarget* aProcessingTarget,
-      nsTArray<RefPtr<MozPromise>>& aPromises) {
+      nsTArray<RefPtr<MozPromise>>& aPromises,
+      nsIEventTarget::DispatchFlags aDispatchFlags = NS_DISPATCH_NORMAL) {
     if (aPromises.Length() == 0) {
       return AllSettledPromiseType::CreateAndResolve(
           CopyableTArray<ResolveOrRejectValue>(), __func__);
@@ -417,10 +447,12 @@ class MozPromise : public MozPromiseBase {
     RefPtr holder = MakeRefPtr<AllSettledPromiseHolder>(aPromises.Length());
     RefPtr<AllSettledPromiseType> promise = holder->Promise();
     for (size_t i = 0; i < aPromises.Length(); ++i) {
-      aPromises[i]->Then(aProcessingTarget, __func__,
-                         [holder, i](ResolveOrRejectValueParam aValue) -> void {
-                           holder->Settle(i, MaybeMove(aValue));
-                         });
+      aPromises[i]->Then(
+          aProcessingTarget, __func__,
+          [holder, i](ResolveOrRejectValueParam aValue) -> void {
+            holder->Settle(i, MaybeMove(aValue));
+          },
+          aDispatchFlags);
     }
     return promise;
   }
@@ -499,8 +531,13 @@ class MozPromise : public MozPromiseBase {
       RefPtr<MozPromise> mPromise;
     };
 
-    ThenValueBase(nsISerialEventTarget* aResponseTarget, StaticString aCallSite)
-        : mResponseTarget(aResponseTarget), mCallSite(aCallSite) {
+    ThenValueBase(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
+                  nsIEventTarget::DispatchFlags aDispatchFlags)
+        : mResponseTarget(aResponseTarget),
+          mCallSite(aCallSite),
+          mDispatchFlags(aDispatchFlags) {
+      MOZ_ASSERT(!(mDispatchFlags & NS_DISPATCH_AT_END),
+                 "invalid dispatch flag for MozPromise::Then");
       MOZ_ASSERT(aResponseTarget);
     }
 
@@ -524,7 +561,8 @@ class MozPromise : public MozPromiseBase {
         p->AssertIsDead();
       } else {
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-        if (MOZ_UNLIKELY(!Request::mDisconnected)) {
+        if (MOZ_UNLIKELY(!Request::mDisconnected) &&
+            !(mDispatchFlags & NS_DISPATCH_FALLIBLE)) {
           MOZ_CRASH_UNSAFE_PRINTF(
               "MozPromise::ThenValue created from '%s' destroyed without being "
               "either disconnected, resolved, or rejected (dispatchRv: %s)",
@@ -597,7 +635,7 @@ class MozPromise : public MozPromiseBase {
       // We do record whether or not it succeeds so that if the ThenValueBase is
       // then destroyed and it was not disconnected, we can include that
       // information in the assertion message.
-      SetDispatchRv(mResponseTarget->Dispatch(r.forget()));
+      SetDispatchRv(mResponseTarget->Dispatch(r.forget(), mDispatchFlags));
     }
 
     void Disconnect() override {
@@ -646,6 +684,7 @@ class MozPromise : public MozPromiseBase {
 #ifdef PROMISE_DEBUG
     uint32_t mMagic2 = sMagic;
 #endif
+    nsIEventTarget::DispatchFlags mDispatchFlags;
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
     Maybe<nsresult> mDispatchRv;
 #endif
@@ -669,8 +708,9 @@ class MozPromise : public MozPromiseBase {
 
    public:
     ThenValue(nsISerialEventTarget* aResponseTarget, OnSettled&& aOnSettled,
-              StaticString aCallSite)
-        : ThenValueBase(aResponseTarget, aCallSite),
+              StaticString aCallSite,
+              nsIEventTarget::DispatchFlags aDispatchFlags)
+        : ThenValueBase(aResponseTarget, aCallSite, aDispatchFlags),
           mOnSettled(std::in_place, std::forward<OnSettled>(aOnSettled)) {}
 
     void Disconnect() override {
@@ -717,6 +757,8 @@ class MozPromise : public MozPromiseBase {
     // NOTE: Theoretically we should be able to use templates to eliminate this
     // member if `!SupportChaining`.
     RefPtr<typename PromiseType::Private> mCompletionPromise;
+
+    nsIEventTarget::DispatchFlags mDispatchFlags;
   };
 
  public:
@@ -827,19 +869,23 @@ class MozPromise : public MozPromiseBase {
  public:
   template <detail::OptArgInvocable<ResolveOrRejectValueParam> OnSettled>
   auto Then(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
-            OnSettled&& aOnSettled) {
+            OnSettled&& aOnSettled,
+            nsIEventTarget::DispatchFlags aFlags = NS_DISPATCH_NORMAL) {
     RefPtr thenValue = MakeRefPtr<ThenValue<OnSettled>>(
-        aResponseTarget, std::forward<OnSettled>(aOnSettled), aCallSite);
+        aResponseTarget, std::forward<OnSettled>(aOnSettled), aCallSite,
+        aFlags);
     return ThenCommand<ThenValue<OnSettled>>(aCallSite, thenValue.forget(),
                                              this);
   }
 
   template <typename ThisType, typename OnSettled>
   auto Then(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
-            ThisType* aThisVal, OnSettled&& aOnSettled) {
+            ThisType* aThisVal, OnSettled&& aOnSettled,
+            nsIEventTarget::DispatchFlags aFlags = NS_DISPATCH_NORMAL) {
     return Then(
         aResponseTarget, aCallSite,
-        std::bind_front(std::forward<OnSettled>(aOnSettled), RefPtr{aThisVal}));
+        std::bind_front(std::forward<OnSettled>(aOnSettled), RefPtr{aThisVal}),
+        aFlags);
   }
 
   template <detail::OptArgInvocable<ResolveValueTypeParam> OnResolve,
@@ -848,37 +894,43 @@ class MozPromise : public MozPromiseBase {
         detail::OptArgInvokeResult<OnResolve, ResolveValueTypeParam>,
         detail::OptArgInvokeResult<OnReject, RejectValueTypeParam>>
   auto Then(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
-            OnResolve&& aOnResolve, OnReject&& aOnReject) {
+            OnResolve&& aOnResolve, OnReject&& aOnReject,
+            nsIEventTarget::DispatchFlags aFlags = NS_DISPATCH_NORMAL) {
     using CommonType = std::common_type_t<
         detail::OptArgInvokeResult<OnResolve, ResolveValueTypeParam>,
         detail::OptArgInvokeResult<OnReject, RejectValueTypeParam>>;
-    return Then(aResponseTarget, aCallSite,
-                [onResolve = std::forward<OnResolve>(aOnResolve),
-                 onReject = std::forward<OnReject>(aOnReject)](
-                    ResolveOrRejectValueParam aValue) mutable -> CommonType {
-                  if (aValue.IsResolve()) {
-                    return detail::OptArgInvoke(
-                        std::move(onResolve), MaybeMove(aValue.ResolveValue()));
-                  }
-                  return detail::OptArgInvoke(std::move(onReject),
-                                              MaybeMove(aValue.RejectValue()));
-                });
+    return Then(
+        aResponseTarget, aCallSite,
+        [onResolve = std::forward<OnResolve>(aOnResolve),
+         onReject = std::forward<OnReject>(aOnReject)](
+            ResolveOrRejectValueParam aValue) mutable -> CommonType {
+          if (aValue.IsResolve()) {
+            return detail::OptArgInvoke(std::move(onResolve),
+                                        MaybeMove(aValue.ResolveValue()));
+          }
+          return detail::OptArgInvoke(std::move(onReject),
+                                      MaybeMove(aValue.RejectValue()));
+        },
+        aFlags);
   }
 
   template <typename ThisType, typename OnResolve, typename OnReject>
   auto Then(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
-            ThisType* aThisVal, OnResolve&& aOnResolve, OnReject&& aOnReject) {
+            ThisType* aThisVal, OnResolve&& aOnResolve, OnReject&& aOnReject,
+            nsIEventTarget::DispatchFlags aFlags = NS_DISPATCH_NORMAL) {
     return Then(
         aResponseTarget, aCallSite,
         std::bind_front(std::forward<OnResolve>(aOnResolve), RefPtr{aThisVal}),
-        std::bind_front(std::forward<OnReject>(aOnReject), RefPtr{aThisVal}));
+        std::bind_front(std::forward<OnReject>(aOnReject), RefPtr{aThisVal}),
+        aFlags);
   }
 
   // Shorthand for a `Then` which simply forwards the reject-value, but performs
   // some additional work with the resolve-value.
   template <std::invocable<ResolveValueTypeParam> MapResolve>
   auto Map(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
-           MapResolve&& aMapResolve) {
+           MapResolve&& aMapResolve,
+           nsIEventTarget::DispatchFlags aFlags = NS_DISPATCH_NORMAL) {
     using PromiseType = MozPromise<
         std::decay_t<std::invoke_result_t<MapResolve, ResolveValueTypeParam>>,
         RejectValueType, IsExclusive>;
@@ -893,29 +945,33 @@ class MozPromise : public MozPromiseBase {
           }
           return PromiseType::CreateAndReject(MaybeMove(aValue.RejectValue()),
                                               aCallSite);
-        });
+        },
+        aFlags);
   }
 
   // Shorthand for a `Then` which simply forwards the resolve-value, but
   // performs some additional work with the reject-value.
   template <std::invocable<RejectValueTypeParam> MapReject>
   auto MapErr(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
-              MapReject&& aMapReject) {
+              MapReject&& aMapReject,
+              nsIEventTarget::DispatchFlags aFlags = NS_DISPATCH_NORMAL) {
     using PromiseType =
         MozPromise<ResolveValueType,
                    std::invoke_result_t<MapReject, RejectValueTypeParam>,
                    IsExclusive>;
-    return Then(aResponseTarget, aCallSite,
-                [aCallSite, mapReject = std::forward<MapReject>(aMapReject)](
-                    ResolveOrRejectValueParam aValue) {
-                  if (aValue.IsReject()) {
-                    return PromiseType::CreateAndReject(
-                        std::invoke(mapReject, MaybeMove(aValue.RejectValue())),
-                        aCallSite);
-                  }
-                  return PromiseType::CreateAndResolve(
-                      MaybeMove(aValue.ResolveValue()), aCallSite);
-                });
+    return Then(
+        aResponseTarget, aCallSite,
+        [aCallSite, mapReject = std::forward<MapReject>(aMapReject)](
+            ResolveOrRejectValueParam aValue) {
+          if (aValue.IsReject()) {
+            return PromiseType::CreateAndReject(
+                std::invoke(mapReject, MaybeMove(aValue.RejectValue())),
+                aCallSite);
+          }
+          return PromiseType::CreateAndResolve(MaybeMove(aValue.ResolveValue()),
+                                               aCallSite);
+        },
+        aFlags);
   }
 
   void ChainTo(already_AddRefed<Private> aChainedPromise,
@@ -1434,8 +1490,10 @@ class MozPromiseRequestHolder {
 // Invoke a function object (e.g., lambda) asynchronously.
 // Return a promise that the function should eventually resolve or reject.
 template <std::invocable Function>
-static auto InvokeAsync(nsISerialEventTarget* aTarget, StaticString aCallerName,
-                        Function&& aFunction)
+static auto InvokeAsync(
+    nsISerialEventTarget* aTarget, StaticString aCallerName,
+    Function&& aFunction,
+    nsIEventTarget::DispatchFlags aDispatchFlags = NS_DISPATCH_NORMAL)
     -> std::invoke_result_t<Function> {
   static_assert(!std::is_lvalue_reference_v<Function>,
                 "Function object must not be passed by lvalue-ref (to avoid "
@@ -1447,13 +1505,15 @@ static auto InvokeAsync(nsISerialEventTarget* aTarget, StaticString aCallerName,
 
   auto promise = MakeRefPtr<
       typename RemoveSmartPointer<std::invoke_result_t<Function>>::Private>(
-      aCallerName);
-  aTarget->Dispatch(NS_NewCancelableRunnableFunction(
-      "InvokeAsync",
-      [promise, function = std::forward<Function>(aFunction)]() mutable {
-        auto result = std::invoke(std::move(function));
-        result->ChainTo(promise.forget(), "<Proxy Promise>");
-      }));
+      aCallerName, true /* aIsCompletionPromise */);
+  aTarget->Dispatch(
+      NS_NewCancelableRunnableFunction(
+          "InvokeAsync",
+          [promise, function = std::forward<Function>(aFunction)]() mutable {
+            auto result = std::invoke(std::move(function));
+            result->ChainTo(promise.forget(), "<Proxy Promise>");
+          }),
+      aDispatchFlags);
   return promise;
 }
 
