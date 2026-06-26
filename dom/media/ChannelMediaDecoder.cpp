@@ -393,7 +393,7 @@ void ChannelMediaDecoder::DownloadProgressed() {
 
   GetOwner()->DownloadProgressed();
 
-  using StatsPromise = MozPromise<MediaStatistics, bool, true>;
+  using StatsPromise = MozPromise<MediaStatistics, PromiseAbandoned, true>;
   InvokeAsync(GetStateMachine()->OwnerThread(), __func__,
               [playbackStats = mPlaybackStatistics,
                res = RefPtr<BaseMediaResource>(mResource),
@@ -427,7 +427,7 @@ void ChannelMediaDecoder::DownloadProgressed() {
             // Update readyState since mCanPlayThrough might have changed.
             GetOwner()->UpdateReadyState();
           },
-          []() { MOZ_ASSERT_UNREACHABLE("Promise not resolved"); });
+          [](PromiseAbandoned) {});
 }
 
 /* static */

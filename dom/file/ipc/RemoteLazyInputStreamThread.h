@@ -6,6 +6,7 @@
 #define mozilla_RemoteLazyInputStreamThread_h
 
 #include "mozilla/RemoteLazyInputStreamChild.h"
+#include "nsIDirectTaskDispatcher.h"
 #include "nsIEventTarget.h"
 #include "nsIObserver.h"
 #include "nsTArray.h"

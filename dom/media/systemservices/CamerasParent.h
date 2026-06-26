@@ -155,8 +155,9 @@ class CamerasParent : public PCamerasParent {
  public:
   using ShutdownMozPromise = media::ShutdownBlockingTicket::ShutdownMozPromise;
 
-  using CameraAccessRequestPromise = MozPromise<CamerasAccessStatus, void_t,
-                                                /* IsExclusive = */ false>;
+  using CameraAccessRequestPromise =
+      MozPromise<CamerasAccessStatus, PromiseAbandoned,
+                 /* IsExclusive = */ false>;
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING_WITH_DELETE_ON_EVENT_TARGET(
       CamerasParent, mPBackgroundEventTarget.GetEventTarget())

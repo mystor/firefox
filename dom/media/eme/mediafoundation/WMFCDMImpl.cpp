@@ -79,6 +79,12 @@ WMFCDMCapabilites::GetCapabilities(
               mCDMs.Clear();
             });
 
+            if (aResult.IsReject()) {
+              EME_LOG("Failed on abandoned capabilities AllSettledPromise");
+              mCapabilitiesPromiseHolder.Reject(false, __func__);
+              return;
+            }
+
             nsTArray<KeySystemConfig> outConfigs;
             for (const auto& promiseRv : aResult.ResolveValue()) {
               if (promiseRv.IsReject()) {

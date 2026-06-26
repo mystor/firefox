@@ -675,9 +675,7 @@ already_AddRefed<Promise> MediaSource::MozDebugReaderData(ErrorResult& aRv) {
       [domPromise, infoPtr = std::move(info)] {
         domPromise->MaybeResolve(infoPtr.get());
       },
-      [] {
-        MOZ_ASSERT_UNREACHABLE("Unexpected rejection while getting debug data");
-      });
+      [domPromise](nsresult rv) { domPromise->MaybeReject(rv); });
 
   return domPromise.forget();
 }

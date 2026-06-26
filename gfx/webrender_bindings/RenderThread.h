@@ -39,7 +39,7 @@ class SurfacePool;
 }  // namespace layers
 namespace wr {
 
-typedef MozPromise<MemoryReport, bool, true> MemoryReportPromise;
+typedef MozPromise<MemoryReport, PromiseAbandoned, true> MemoryReportPromise;
 
 class RendererOGL;
 class RenderTextureHost;

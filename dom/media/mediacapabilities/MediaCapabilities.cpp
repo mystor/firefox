@@ -714,7 +714,8 @@ void MediaCapabilities::CreateWebRTCDecodingInfo(
     Maybe<MediaContainerType> aVideoContainer,
     Maybe<MediaContainerType> aAudioContainer) {
   using PromiseType =
-      MozPromise<MediaCapabilitiesDecodingInfo, bool, /*IsExclusive=*/true>;
+      MozPromise<MediaCapabilitiesDecodingInfo, PromiseAbandoned,
+                 /*IsExclusive=*/true>;
   RefPtr<DOMMozPromiseRequestHolder<PromiseType>> holder;
   RefPtr<nsISerialEventTarget> targetThread;
   RefPtr<StrongWorkerRef> workerRef;
@@ -800,16 +801,21 @@ void MediaCapabilities::CreateWebRTCDecodingInfo(
                          "MediaCapabilities::CreateWebRTCDecodingInfo");
                    });
       })
-      ->Then(
-          targetThread, __func__,
-          [promise = RefPtr(aPromise), workerRef,
-           holder](MediaCapabilitiesDecodingInfo&& aInfo) {
-            holder->Complete();
-            nsIGlobalObject* global = holder->GetParentObject();
-            NS_ENSURE_TRUE_VOID(global);
-            promise->MaybeResolve(std::move(aInfo));
-          },
-          [] { MOZ_CRASH("Unexpected"); })
+      ->Then(targetThread, __func__,
+             [promise = RefPtr(aPromise), workerRef, holder](auto&& aValue) {
+               holder->Complete();
+               nsIGlobalObject* global = holder->GetParentObject();
+               NS_ENSURE_TRUE_VOID(global);
+               if (aValue.IsResolve()) {
+                 promise->MaybeResolve(std::move(aValue.ResolveValue()));
+               } else {
+                 MediaCapabilitiesDecodingInfo info;
+                 info.mSupported = false;
+                 info.mSmooth = false;
+                 info.mPowerEfficient = false;
+                 promise->MaybeResolve(std::move(info));
+               }
+             })
       ->Track(*holder);
 }
 
@@ -1520,8 +1526,8 @@ void MediaCapabilities::CreateWebRTCEncodingInfo(
 
   // We defer checking specific encoder support to a background TaskQueue, and
   // continue the algorithm async in the then handler later.
-  using PromiseType =
-      MozPromise<MediaCapabilitiesInfo, bool, /*IsExclusive=*/true>;
+  using PromiseType = MozPromise<MediaCapabilitiesInfo, PromiseAbandoned,
+                                 /*IsExclusive=*/true>;
   RefPtr<DOMMozPromiseRequestHolder<PromiseType>> holder;
   RefPtr<nsISerialEventTarget> targetThread;
   RefPtr<StrongWorkerRef> workerRef;
@@ -1628,17 +1634,23 @@ void MediaCapabilities::CreateWebRTCEncodingInfo(
                       "MediaCapabilities::EncodingInfo");
                 });
       })
-      ->Then(
-          targetThread, __func__,
-          [encodePromise = RefPtr(aPromise), workerRef, holder,
-           aConfiguration](MediaCapabilitiesInfo aInfo) {
-            holder->Complete();
-            nsIGlobalObject* global = holder->GetParentObject();
-            NS_ENSURE_TRUE_VOID(global);
-            // Step 11: Return info.
-            encodePromise->MaybeResolve(std::move(aInfo));
-          },
-          [] { MOZ_CRASH("Unexpected"); })
+      ->Then(targetThread, __func__,
+             [encodePromise = RefPtr(aPromise), workerRef, holder,
+              aConfiguration](auto&& aValue) {
+               holder->Complete();
+               nsIGlobalObject* global = holder->GetParentObject();
+               NS_ENSURE_TRUE_VOID(global);
+               // Step 11: Return info.
+               if (aValue.IsResolve()) {
+                 encodePromise->MaybeResolve(std::move(aValue.ResolveValue()));
+               } else {
+                 MediaCapabilitiesInfo info;
+                 info.mSupported = false;
+                 info.mSmooth = false;
+                 info.mPowerEfficient = false;
+                 encodePromise->MaybeResolve(std::move(info));
+               }
+             })
       ->Track(*holder);
 }
 

@@ -1111,8 +1111,10 @@ static nsresult NormalizeUploadStream(nsIInputStream* aUploadStream,
                      [](GenericPromise::AllSettledPromiseType::
                             ResolveOrRejectValue&& aResults)
                          -> RefPtr<GenericPromise> {
-                       MOZ_ASSERT(aResults.IsResolve(),
-                                  "AllSettled never rejects");
+                       if (aResults.IsReject()) {
+                         return GenericPromise::CreateAndReject(
+                             NS_ERROR_MOZPROMISE_ABANDONED, __func__);
+                       }
                        for (auto& result : aResults.ResolveValue()) {
                          if (result.IsReject()) {
                            return GenericPromise::CreateAndReject(

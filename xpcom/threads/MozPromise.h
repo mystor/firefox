@@ -5,6 +5,7 @@
 #ifndef XPCOM_THREADS_MOZPROMISE_H_
 #define XPCOM_THREADS_MOZPROMISE_H_
 
+#include <concepts>
 #include <type_traits>
 #include <utility>
 
@@ -13,12 +14,15 @@
 #include "mozilla/Logging.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Monitor.h"
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/StaticString.h"
 #include "mozilla/Variant.h"
-#include "nsIDirectTaskDispatcher.h"
+#include "nsICancelableRunnable.h"
 #include "nsISerialEventTarget.h"
+#include "nsITargetShutdownTask.h"
+#include "nsString.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
 
@@ -44,9 +48,6 @@
 
 namespace mozilla {
 
-template <typename ResolveValueT, typename RejectValueT, bool IsExclusive>
-class MozPromise;
-
 namespace dom {
 class Promise;
 }
@@ -56,13 +57,73 @@ extern LazyLogModule gMozPromiseLog;
 #define PROMISE_LOG(x, ...) \
   MOZ_LOG(gMozPromiseLog, mozilla::LogLevel::Debug, (x, ##__VA_ARGS__))
 
+#ifdef DEBUG
+#  define PROMISE_WARNING(x, ...)                         \
+    do {                                                  \
+      nsPrintfCString warning_message_(x, ##__VA_ARGS__); \
+      NS_WARNING(warning_message_.get());                 \
+      MOZ_LOG(gMozPromiseLog, mozilla::LogLevel::Warning, \
+              ("%s", warning_message_.get()));            \
+    } while (0)
+#else
+#  define PROMISE_WARNING(x, ...) \
+    MOZ_LOG(gMozPromiseLog, mozilla::LogLevel::Warning, (x, ##__VA_ARGS__))
+#endif
+
+// Support default abandon handlers for any type which supports conversion from
+// `nsresult`, which has a special error type for promise abandonment.
+template <typename RejectValueT>
+  requires std::constructible_from<RejectValueT, nsresult>
+struct DefaultAbandonHandler<RejectValueT> {
+  RejectValueT operator()() const {
+    return RejectValueT{NS_ERROR_MOZPROMISE_ABANDONED};
+  }
+};
+
+// Support default abandon handlers for any type which supports conversion from
+// `PromiseAbandoned{}`, as a way for custom error types to quickly opt-in to
+// abandon handling.
+template <typename RejectValueT>
+  requires std::constructible_from<RejectValueT, PromiseAbandoned>
+struct DefaultAbandonHandler<RejectValueT> {
+  RejectValueT operator()() const { return RejectValueT{PromiseAbandoned{}}; }
+};
+
+// Many users of MozPromise currently use generic string types as their error
+// type, usually including some error message for why something went wrong.
+template <>
+struct DefaultAbandonHandler<nsCString> {
+  nsCString operator()() const { return "promise abandoned"_ns; }
+};
+
+template <>
+struct DefaultAbandonHandler<nsString> {
+  nsString operator()() const { return u"promise abandoned"_ns; }
+};
+
+// FIXME: There are so many promises which use `bool` as their rejection type
+// that to reduce churn, we basically have to support implicit conversions to
+// it. We should remove this AbandonHandler in a follow-up and migrate these
+// types to use something more descriptive.
+template <>
+struct DefaultAbandonHandler<bool> {
+  bool operator()() const { return false; }
+};
+
+// Special abandon handler which can be used when abandoning should reject with
+// a compile-time known value.
+template <auto Value>
+struct ValueAbandonHandler {
+  auto operator()() const { return Value; }
+};
+
 namespace detail {
 
 template <typename T>
 constexpr static bool IsRefPtrMozPromise = false;
 
-template <typename T, typename U, bool B>
-constexpr static bool IsRefPtrMozPromise<RefPtr<MozPromise<T, U, B>>> = true;
+template <typename T, typename U, bool B, typename A>
+constexpr static bool IsRefPtrMozPromise<RefPtr<MozPromise<T, U, B, A>>> = true;
 
 // Historically the argument to most callbacks from MozPromise have been
 // optional. Because of that, we need to use our own suite of invocable and
@@ -85,6 +146,11 @@ template <typename Fn, typename Arg>
   requires OptArgInvocable<Fn, Arg>
 using OptArgInvokeResult =
     decltype(OptArgInvoke(std::declval<Fn>(), std::declval<Arg>()));
+
+template <typename T, typename RejectValueT>
+concept AbandonHandlerFor = std::default_initializable<T> && requires(T t) {
+  { t() } -> std::convertible_to<RejectValueT>;
+};
 
 }  // namespace detail
 
@@ -159,17 +225,87 @@ using OptArgInvokeResult =
  * avoiding issues around dispatch failure during shutdown.
  */
 
-class MozPromiseRefcountable {
+class MozPromiseBase {
  public:
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MozPromiseRefcountable)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MozPromiseBase)
+
  protected:
-  virtual ~MozPromiseRefcountable() = default;
+  virtual ~MozPromiseBase() = default;
 };
 
-class MozPromiseBase : public MozPromiseRefcountable {
+class MozPromiseRequest : public nsISupports {
  public:
-  virtual void AssertIsDead() = 0;
+  NS_DECL_THREADSAFE_ISUPPORTS
+
+  virtual void Disconnect() = 0;
+
+ protected:
+  virtual ~MozPromiseRequest() = default;
 };
+
+namespace detail {
+
+class MozPromiseThenValueBase : public MozPromiseRequest,
+                                public nsIRunnable,
+                                public nsIDiscardableRunnable,
+                                public nsICancelableRunnable,
+                                public nsIRunnablePriority,
+                                public nsINamed,
+                                public nsITargetShutdownTask {
+ public:
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_NSIRUNNABLEPRIORITY
+  NS_DECL_NSINAMED
+
+  void OnDiscard() final { Run(); }
+  nsresult Cancel() final { return Run(); }
+  void TargetShutdown() final { Run(); }
+
+  // Must be called before the Request is added to the MozPromise or dispatched
+  // to try to register a shutdown task on aResponseTarget.
+  bool RegisterShutdownTask();
+
+  void Dispatch(MozPromiseBase* aPromise, bool mUseSynchronousTaskDispatch,
+                bool mUseDirectTaskDispatch, uint32_t mPriority);
+
+  nsISerialEventTarget* ResponseTarget() const { return mResponseTarget; }
+
+ protected:
+  MozPromiseThenValueBase(nsISerialEventTarget* aResponseTarget,
+                          StaticString aCallSite,
+                          nsIEventTarget::DispatchFlags aDispatchFlags);
+  virtual ~MozPromiseThenValueBase() = default;
+
+  // Check if the callback mOnSettled is still present (i.e. that the request
+  // has not been notified or disconnected).
+  virtual bool HasCallback() MOZ_REQUIRES(mMutex) = 0;
+
+  // Called when Dispatch fails internally, passing in the dispatch result. This
+  // is overridden by ThenValue to abandon chained completion promises and set
+  // mDispatchRv.
+  virtual void DispatchFailed(nsresult aDispatchRv) = 0;
+
+  const nsCOMPtr<nsISerialEventTarget> mResponseTarget;
+  const StaticString mCallSite;
+  const nsIEventTarget::DispatchFlags mDispatchFlags;
+
+  Mutex mMutex{"MozPromiseRequest::mMutex"};
+  uint32_t mPriority MOZ_GUARDED_BY(mMutex) =
+      nsIRunnablePriority::PRIORITY_NORMAL;
+  nsresult mRegisterShutdownTaskRv MOZ_GUARDED_BY(mMutex) = NS_OK;
+  nsresult mDispatchRv MOZ_GUARDED_BY(mMutex) = NS_OK;
+  RefPtr<MozPromiseBase> mSettledPromise MOZ_GUARDED_BY(mMutex);
+};
+
+class MozPromiseAllBase {
+ public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MozPromiseAllBase)
+
+ protected:
+  virtual ~MozPromiseAllBase() = default;
+};
+
+}  // namespace detail
 
 template <typename ResolveValueT, typename RejectValueT>
 class MozPromiseValue {
@@ -232,7 +368,8 @@ template <typename PromiseType, typename ImplType>
 class MozPromiseHolderBase;
 template <typename T>
 class MozPromiseRequestHolder;
-template <typename ResolveValueT, typename RejectValueT, bool IsExclusive>
+template <typename ResolveValueT, typename RejectValueT, bool IsExclusive,
+          typename AbandonHandler>
 class MozPromise : public MozPromiseBase {
   static const uint32_t sMagic = 0xcecace11;
 
@@ -251,20 +388,21 @@ class MozPromise : public MozPromiseBase {
   using RejectValueType = RejectValueT;
   using ResolveOrRejectValue =
       MozPromiseValue<ResolveValueType, RejectValueType>;
+  using AbandonHandlerType = AbandonHandler;
 
  protected:
   // MozPromise is the public type, and never constructed directly. Construct
   // a MozPromise::Private, defined below.
   MozPromise(StaticString aCreationSite, bool aIsCompletionPromise)
-      : mCreationSite(aCreationSite),
-        mMutex("MozPromise Mutex"),
-        mHaveRequest(false),
-        mIsCompletionPromise(aIsCompletionPromise)
+      : mCreationSite(aCreationSite)
 #ifdef PROMISE_DEBUG
         ,
         mMagic4(&mMutex)
 #endif
   {
+    static_assert(
+        detail::AbandonHandlerFor<AbandonHandlerType, RejectValueType>,
+        "Must have a valid abandon handler");
     PROMISE_LOG("%s creating MozPromise (%p)", mCreationSite.get(), this);
   }
 
@@ -311,13 +449,14 @@ class MozPromise : public MozPromiseBase {
     return p;
   }
 
-  using AllPromiseType = MozPromise<CopyableTArray<ResolveValueType>,
-                                    RejectValueType, IsExclusive>;
-  using AllSettledPromiseType =
-      MozPromise<CopyableTArray<ResolveOrRejectValue>, bool, IsExclusive>;
+  using AllPromiseType =
+      MozPromise<CopyableTArray<ResolveValueType>, RejectValueType, IsExclusive,
+                 AbandonHandlerType>;
+  using AllSettledPromiseType = MozPromise<CopyableTArray<ResolveOrRejectValue>,
+                                           PromiseAbandoned, IsExclusive>;
 
  private:
-  class AllPromiseHolder : public MozPromiseRefcountable {
+  class AllPromiseHolder : public detail::MozPromiseAllBase {
    public:
     explicit AllPromiseHolder(size_t aDependentPromises)
         : mPromise(new typename AllPromiseType::Private(
@@ -378,7 +517,7 @@ class MozPromise : public MozPromiseBase {
 
   using RejectValueTypeParam = ParamType<RejectValueType>;
 
-  class AllSettledPromiseHolder : public MozPromiseRefcountable {
+  class AllSettledPromiseHolder : public detail::MozPromiseAllBase {
    public:
     explicit AllSettledPromiseHolder(size_t aDependentPromises)
         : mPromise(new typename AllSettledPromiseType::Private(
@@ -464,317 +603,250 @@ class MozPromise : public MozPromiseBase {
     return promise;
   }
 
-  class Request : public MozPromiseRefcountable {
-   public:
-    virtual void Disconnect() = 0;
+ protected:
+  // Helper type for working with completion promises if they are supported
+  // generically.
+  template <typename InvokeResult>
+  struct CompletionPromiseHolder {
+    constexpr static bool SupportChaining = false;
 
-   protected:
-    Request() : mComplete(false), mDisconnected(false) {}
-    virtual ~Request() = default;
+    bool Exists() const { return false; }
 
-    bool mComplete;
-    bool mDisconnected;
+    void Abandon(StaticString) {}
+
+    template <typename OnSettled, typename... Args>
+    void Invoke(Maybe<OnSettled>& aOnSettled, Args&&... aArgs) {
+      detail::OptArgInvoke(aOnSettled.extract(), std::forward<Args>(aArgs)...);
+    }
   };
 
- protected:
+  template <typename InvokeResult>
+    requires detail::IsRefPtrMozPromise<InvokeResult>
+  struct CompletionPromiseHolder<InvokeResult> {
+    constexpr static bool SupportChaining = true;
+
+    using PromiseType = RemoveSmartPointer<InvokeResult>;
+    using PromisePrivateType = typename PromiseType::Private;
+
+    RefPtr<PromiseType> Create() {
+      MOZ_ASSERT(!mPromise,
+                 "Can only call CompletionPromiseHolder::Create once");
+      RefPtr promise = MakeRefPtr<PromisePrivateType>(
+          "<completion promise>", true /* aIsCompletionPromise */);
+      mPromise = promise;
+      return promise.forget();
+    }
+
+    bool Exists() const { return !!mPromise; }
+
+    void Abandon(StaticString aCallSite) {
+      if (RefPtr promise = mPromise.forget()) {
+        promise->Abandon(aCallSite);
+      }
+    }
+
+    template <typename OnSettled, typename... Args>
+    void Invoke(Maybe<OnSettled>& aOnSettled, Args&&... aArgs) {
+      InvokeResult result = detail::OptArgInvoke(aOnSettled.extract(),
+                                                 std::forward<Args>(aArgs)...);
+      if (mPromise) {
+        MOZ_DIAGNOSTIC_ASSERT(
+            result,
+            "Can't do promise chaining for a non-promise-returning method.");
+        result->ChainTo(mPromise.forget(), "<chained completion promise>");
+      }
+    }
+
+    RefPtr<PromisePrivateType> mPromise;
+  };
+
   /*
    * A ThenValue tracks a single consumer waiting on the promise. When a
    * consumer invokes promise->Then(...), a ThenValue is created. Once the
    * Promise is resolved or rejected, a {Resolve,Reject}Runnable is dispatched,
    * which invokes the resolve/reject method and then deletes the ThenValue.
    */
-  class ThenValueBase : public Request {
-    friend class MozPromise;
-    static const uint32_t sMagic = 0xfadece11;
-
-   public:
-    class ResolveOrRejectRunnable final
-        : public PrioritizableCancelableRunnable {
-     public:
-      ResolveOrRejectRunnable(ThenValueBase* aThenValue, MozPromise* aPromise)
-          : PrioritizableCancelableRunnable(
-                aPromise->mPriority,
-                "MozPromise::ThenValueBase::ResolveOrRejectRunnable"),
-            mThenValue(aThenValue),
-            mPromise(aPromise) {
-        MOZ_DIAGNOSTIC_ASSERT(!mPromise->IsPending());
-      }
-
-#ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
-      // nsINamed
-      NS_IMETHOD GetName(nsACString& aName) override {
-        nsresult rv = PrioritizableCancelableRunnable::GetName(aName);
-        if (NS_FAILED(rv)) {
-          return rv;
-        }
-
-        if (mPromise) {
-          aName.Append(" ");
-          aName.Append(mPromise->mCreationSite);
-        };
-
-        return NS_OK;
-      }
-#endif
-
-      ~ResolveOrRejectRunnable() {
-        if (mThenValue) {
-          mThenValue->AssertIsDead();
-        }
-      }
-
-      NS_IMETHOD Run() override {
-        PROMISE_LOG("ResolveOrRejectRunnable::Run() [this=%p]", this);
-        mThenValue->DoResolveOrReject(mPromise->Value());
-        mThenValue = nullptr;
-        mPromise = nullptr;
-        return NS_OK;
-      }
-
-      nsresult Cancel() override { return Run(); }
-
-     private:
-      RefPtr<ThenValueBase> mThenValue;
-      RefPtr<MozPromise> mPromise;
-    };
-
-    ThenValueBase(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
-                  nsIEventTarget::DispatchFlags aDispatchFlags)
-        : mResponseTarget(aResponseTarget),
-          mCallSite(aCallSite),
-          mDispatchFlags(aDispatchFlags) {
-      MOZ_ASSERT(!(mDispatchFlags & NS_DISPATCH_AT_END),
-                 "invalid dispatch flag for MozPromise::Then");
-      MOZ_ASSERT(aResponseTarget);
-    }
-
-#ifdef PROMISE_DEBUG
-    ~ThenValueBase() {
-      mMagic1 = 0;
-      mMagic2 = 0;
-    }
-#endif
-
-    void AssertIsDead() {
-      PROMISE_ASSERT(mMagic1 == sMagic && mMagic2 == sMagic);
-      // We want to assert that this ThenValues is dead - that is to say, that
-      // there are no consumers waiting for the result. In the case of a normal
-      // ThenValue, we check that it has been disconnected, which is the way
-      // that the consumer signals that it no longer wishes to hear about the
-      // result. If this ThenValue has a completion promise (which is mutually
-      // exclusive with being disconnectable), we recursively assert that every
-      // ThenValue associated with the completion promise is dead.
-      if (MozPromiseBase* p = CompletionPromise()) {
-        p->AssertIsDead();
-      } else {
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-        if (MOZ_UNLIKELY(!Request::mDisconnected) &&
-            !(mDispatchFlags & NS_DISPATCH_FALLIBLE)) {
-          MOZ_CRASH_UNSAFE_PRINTF(
-              "MozPromise::ThenValue created from '%s' destroyed without being "
-              "either disconnected, resolved, or rejected (dispatchRv: %s)",
-              mCallSite.get(),
-              mDispatchRv ? GetStaticErrorName(*mDispatchRv)
-                          : "not dispatched");
-        }
-#endif
-      }
-    }
-
-    void Dispatch(MozPromise* aPromise) {
-      PROMISE_ASSERT(mMagic1 == sMagic && mMagic2 == sMagic);
-      aPromise->mMutex.AssertCurrentThreadOwns();
-      MOZ_ASSERT(!aPromise->IsPending());
-
-      nsCOMPtr<nsIRunnable> r = new ResolveOrRejectRunnable(this, aPromise);
-      PROMISE_LOG(
-          "%s Then() call made from %s [Runnable=%p, Promise=%p, ThenValue=%p] "
-          "%s dispatch",
-          aPromise->mValue.IsResolve() ? "Resolving" : "Rejecting",
-          mCallSite.get(), r.get(), aPromise, this,
-          aPromise->mUseSynchronousTaskDispatch ? "synchronous"
-          : aPromise->mUseDirectTaskDispatch    ? "directtask"
-                                                : "normal");
-
-      if (aPromise->mUseSynchronousTaskDispatch &&
-          mResponseTarget->IsOnCurrentThread()) {
-        PROMISE_LOG("ThenValue::Dispatch running task synchronously [this=%p]",
-                    this);
-        r->Run();
-        return;
-      }
-
-      if (aPromise->mUseDirectTaskDispatch &&
-          mResponseTarget->IsOnCurrentThread()) {
-        PROMISE_LOG(
-            "ThenValue::Dispatch dispatch task via direct task queue [this=%p]",
-            this);
-        nsCOMPtr<nsIDirectTaskDispatcher> dispatcher =
-            do_QueryInterface(mResponseTarget);
-        if (dispatcher) {
-          SetDispatchRv(dispatcher->DispatchDirectTask(r.forget()));
-          return;
-        }
-        NS_WARNING(
-            nsPrintfCString(
-                "Direct Task dispatching not available for thread \"%s\"",
-                PR_GetThreadName(PR_GetCurrentThread()))
-                .get());
-        MOZ_DIAGNOSTIC_ASSERT(
-            false,
-            "mResponseTarget must implement nsIDirectTaskDispatcher for direct "
-            "task dispatching");
-      }
-
-      // Synchronous and direct task dispatch take precedence, as they apply to
-      // same-thread targets only and do not touch the target's event queue.
-      MOZ_ASSERT(!aPromise->mRequireTailDispatch ||
-                     (mResponseTarget->GetFeatures() &
-                      nsIEventTarget::SUPPORTS_TAIL_DISPATCH) !=
-                         nsIEventTarget::SUPPORTS_BASE,
-                 "This promise requires that Then() event targets support "
-                 "tail dispatch");
-
-      // Promise consumers are allowed to disconnect the Request object and
-      // then shut down the thread or task queue that the promise result would
-      // be dispatched on. So we unfortunately can't assert that promise
-      // dispatch succeeds. :-(
-      // We do record whether or not it succeeds so that if the ThenValueBase is
-      // then destroyed and it was not disconnected, we can include that
-      // information in the assertion message.
-      SetDispatchRv(mResponseTarget->Dispatch(r.forget(), mDispatchFlags));
-    }
-
-    void Disconnect() override {
-      MOZ_DIAGNOSTIC_ASSERT(mResponseTarget->IsOnCurrentThread());
-      MOZ_DIAGNOSTIC_ASSERT(!Request::mComplete);
-      Request::mDisconnected = true;
-
-      // We could support rejecting the completion promise on disconnection, but
-      // then we'd need to have some sort of default reject value. The use cases
-      // of disconnection and completion promise chaining seem pretty
-      // orthogonal, so let's use assert against it.
-      MOZ_DIAGNOSTIC_ASSERT(!CompletionPromise());
-    }
-
-   protected:
-    virtual MozPromiseBase* CompletionPromise() const = 0;
-    virtual void DoResolveOrRejectInternal(ResolveOrRejectValue& aValue) = 0;
-
-    void DoResolveOrReject(ResolveOrRejectValue& aValue) {
-      PROMISE_ASSERT(mMagic1 == sMagic && mMagic2 == sMagic);
-      MOZ_DIAGNOSTIC_ASSERT(mResponseTarget->IsOnCurrentThread());
-      Request::mComplete = true;
-      if (Request::mDisconnected) {
-        PROMISE_LOG(
-            "ThenValue::DoResolveOrReject disconnected - bailing out [this=%p]",
-            this);
-        return;
-      }
-
-      // Invoke the resolve or reject method.
-      DoResolveOrRejectInternal(aValue);
-    }
-
-    void SetDispatchRv(nsresult aRv) {
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-      mDispatchRv = Some(aRv);
-#endif
-    }
-
-    nsCOMPtr<nsISerialEventTarget>
-        mResponseTarget;  // May be released on any thread.
-#ifdef PROMISE_DEBUG
-    uint32_t mMagic1 = sMagic;
-#endif
-    StaticString mCallSite;
-#ifdef PROMISE_DEBUG
-    uint32_t mMagic2 = sMagic;
-#endif
-    nsIEventTarget::DispatchFlags mDispatchFlags;
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-    Maybe<nsresult> mDispatchRv;
-#endif
-  };
-
-  template <typename>
-  class ThenCommand;
-
   template <typename OnSettled>
-  class ThenValue : public ThenValueBase {
-    friend class ThenCommand<ThenValue>;
-
-    using InvokeResult =
-        detail::OptArgInvokeResult<OnSettled, ResolveOrRejectValueParam>;
-    constexpr static bool SupportChaining =
-        detail::IsRefPtrMozPromise<InvokeResult>;
-
-    using PromiseType =
-        std::conditional_t<SupportChaining, RemoveSmartPointer<InvokeResult>,
-                           MozPromise>;
-
+  class ThenValue final : public detail::MozPromiseThenValueBase {
    public:
+    using CompletionHolder = CompletionPromiseHolder<
+        detail::OptArgInvokeResult<OnSettled, ResolveOrRejectValueParam>>;
+    constexpr static bool SupportChaining = CompletionHolder::SupportChaining;
+
     ThenValue(nsISerialEventTarget* aResponseTarget, OnSettled&& aOnSettled,
               StaticString aCallSite,
               nsIEventTarget::DispatchFlags aDispatchFlags)
-        : ThenValueBase(aResponseTarget, aCallSite, aDispatchFlags),
+        : detail::MozPromiseThenValueBase(aResponseTarget, aCallSite,
+                                          aDispatchFlags),
           mOnSettled(std::in_place, std::forward<OnSettled>(aOnSettled)) {}
 
-    void Disconnect() override {
-      ThenValueBase::Disconnect();
-
-      // If a Request has been disconnected, we don't guarantee that the settled
-      // callback will be dispatched. Destroy our callbacks now so that any
-      // references in closures are released predictably on the dispatch thread.
-      mOnSettled.reset();
+    auto EnsureCompletionPromise()
+      requires(SupportChaining)
+    {
+      // NOTE: Technically we could probably skip this mutex, as this shouldn't
+      // be shared yet, but an uncontested lock is cheap.
+      MutexAutoLock lock(mMutex);
+      return mCompletionPromise.Create();
     }
 
-   protected:
-    MozPromiseBase* CompletionPromise() const override {
-      return mCompletionPromise;
+    bool HasCallback() final MOZ_REQUIRES(mMutex) {
+      return mOnSettled.isSome();
     }
 
-    void DoResolveOrRejectInternal(ResolveOrRejectValue& aValue) override {
-      // NOTE: We intentionally `extract()` our callback so that any references
-      // in closures are released predictably on the dispatch thread. Otherwise,
-      // they would be released on whatever thread last drops its reference to
-      // the ThenValue, which may or may not be ok.
-      if constexpr (SupportChaining) {
-        InvokeResult result =
-            detail::OptArgInvoke(mOnSettled.extract(), MaybeMove(aValue));
-
-        // If we support chaining, attempt to chain the result into our
-        // completion promise.
-        if (RefPtr completionPromise = mCompletionPromise.forget()) {
-          MOZ_DIAGNOSTIC_ASSERT(
-              result,
-              "Can't do promise chaining for a non-promise-returning method.");
-          result->ChainTo(completionPromise.forget(),
-                          "<chained completion promise>");
+    void DispatchFailed(nsresult aDispatchRv) final {
+      CompletionHolder completionPromise;
+      {
+        MutexAutoLock lock(mMutex);
+        if (!mOnSettled) {
+          // We were disconnected or notified while dispatching.
+          return;
         }
-      } else {
-        detail::OptArgInvoke(mOnSettled.extract(), MaybeMove(aValue));
+
+        mDispatchRv = aDispatchRv;
+
+        // If we didn't successfully register a shutdown task, which will call
+        // us back before the target goes away, emit a warning and abandon our
+        // completion promise. We know it will never be invoked.
+        if (NS_FAILED(mRegisterShutdownTaskRv)) {
+          PROMISE_WARNING("Request[%p] dispatch failed (rv=%s, shutdown rv=%s)",
+                          this, GetStaticErrorName(mDispatchRv),
+                          GetStaticErrorName(mRegisterShutdownTaskRv));
+
+          completionPromise = std::exchange(mCompletionPromise, {});
+        }
       }
+
+      completionPromise.Abandon("<dispatch failure>");
+    }
+
+    void Disconnect() override {
+      // Ensure that any shutdown task, if previously registered, has been
+      // unregistered, as we don't need to be notified if the target goes away
+      // anymore.
+      (void)mResponseTarget->UnregisterShutdownTask(this);
+
+      // Clear out the internal state for this MozPromise, destroying it on the
+      // current thread.
+      // We will not notify this Request even if a runnable was already
+      // dispatched.
+      Maybe<std::decay_t<OnSettled>> onSettled;
+      RefPtr<MozPromiseBase> settledPromise;
+      CompletionHolder completionPromise;
+      {
+        MutexAutoLock lock(mMutex);
+        if (!mOnSettled) {
+          MOZ_ASSERT(!mSettledPromise);
+          MOZ_ASSERT(!mCompletionPromise.Exists());
+          return;
+        }
+        onSettled.emplace(mOnSettled.extract());
+        settledPromise = mSettledPromise.forget();
+        completionPromise = std::exchange(mCompletionPromise, {});
+      }
+
+      // If we have a completion promise, abandon it.
+      //
+      // NOTE: This is currently dead, as it's currently not possible to
+      // explicitly Disconnect a promise in the middle of a completion chain,
+      // but we can support it in case we add new ways to disconnect promises.
+      completionPromise.Abandon("<request disconnected>");
+    }
+
+    NS_IMETHOD Run() final {
+      // It is normal for this shutdown task to already be unregistered, or for
+      // us to have failed to register a shutdown task. Either way, make sure
+      // we're not registered as a shutdown task anymore as soon as we are run.
+      (void)mResponseTarget->UnregisterShutdownTask(this);
+
+      Maybe<std::decay_t<OnSettled>> onSettled;
+      RefPtr<MozPromise> settledPromise;
+      CompletionHolder completionPromise;
+      {
+        MutexAutoLock lock(mMutex);
+        if (!mOnSettled) {
+          MOZ_ASSERT(!mSettledPromise);
+          MOZ_ASSERT(!mCompletionPromise.Exists());
+          return NS_OK;
+        }
+        onSettled.emplace(mOnSettled.extract());
+        settledPromise =
+            mSettledPromise.forget().template downcast<MozPromise>();
+        completionPromise = std::exchange(mCompletionPromise, {});
+      }
+
+      // Determine which value we're going to invoke with. If we have a
+      // value promise, we'll use the value from that type, otherwise we need to
+      // manufacture an abandoned reject reason and notify using that.
+      ResolveOrRejectValue failedValue;
+      ResolveOrRejectValue* value;
+      if (settledPromise) {
+        MOZ_ASSERT(!settledPromise->IsPending());
+        value = &settledPromise->mValue;
+      } else {
+        failedValue.SetReject(AbandonHandler{}());
+        value = &failedValue;
+      }
+
+      // Invoke onSettled, and chain the result to our completion promise if
+      // configured.
+      completionPromise.Invoke(onSettled, MaybeMove(*value));
+      return NS_OK;
     }
 
    private:
-    // Only accessed and deleted on dispatch thread.
-    Maybe<std::decay_t<OnSettled>> mOnSettled;
+    ~ThenValue() {
+      if (MOZ_LIKELY(!mOnSettled)) {
+        return;
+      }
 
-    // NOTE: Theoretically we should be able to use templates to eliminate this
-    // member if `!SupportChaining`.
-    RefPtr<typename PromiseType::Private> mCompletionPromise;
+      // If the promise was marked as NS_DISPATCH_FALLIBLE, recover by
+      // abandoning the completion promise if we have one.
+      // The caller has OK-ed destroying mOnSettled on any thread.
+      if (mDispatchFlags & NS_DISPATCH_FALLIBLE) {
+        PROMISE_WARNING(
+            "NS_DISPATCH_FALLIBLE request '%s' destroyed without being "
+            "notified or disconnected, (dispatchRv=%s,shutdownRv=%s)",
+            mCallSite.get(), GetStaticErrorName(mDispatchRv),
+            GetStaticErrorName(mRegisterShutdownTaskRv));
+        mCompletionPromise.Abandon("<fallible request destroyed>");
+        return;
+      }
 
-    nsIEventTarget::DispatchFlags mDispatchFlags;
+      // This is unfortunately an unrecoverable situation, as we cannot allow
+      // mOnSettled to be destroyed on the wrong event target. Instead we'll
+      // emit a useful crash message.
+      MOZ_CRASH_UNSAFE_PRINTF(
+          "Infallible request '%s' destroyed without being notified or "
+          "disconnected, (dispatchRv=%s,shutdownRv=%s)",
+          mCallSite.get(), GetStaticErrorName(mDispatchRv),
+          GetStaticErrorName(mRegisterShutdownTaskRv));
+    }
+
+    // The callback wrapped by this ThenValue. If this is `Nothing()`, the
+    // ThenValue has already been notified, disconnected, or cancelled and all
+    // other members must also be `Nothing()`.
+    Maybe<std::decay_t<OnSettled>> mOnSettled MOZ_GUARDED_BY(mMutex);
+
+    // Helper type holding the completion promise. This is an empty type if this
+    // callback doesn't return a promise.
+    MOZ_NO_UNIQUE_ADDRESS
+    CompletionHolder mCompletionPromise MOZ_GUARDED_BY(mMutex);
   };
 
- public:
-  void ThenInternal(already_AddRefed<ThenValueBase> aThenValue,
-                    StaticString aCallSite) {
+  void ThenInternal(
+      already_AddRefed<detail::MozPromiseThenValueBase> aThenValue,
+      StaticString aCallSite) {
     PROMISE_ASSERT(mMagic1 == sMagic && mMagic2 == sMagic &&
                    mMagic3 == sMagic && mMagic4 == &mMutex);
-    RefPtr<ThenValueBase> thenValue = aThenValue;
+    RefPtr<detail::MozPromiseThenValueBase> thenValue = aThenValue;
+    thenValue->RegisterShutdownTask();
+
     MutexAutoLock lock(mMutex);
+    MOZ_ASSERT(
+        !mRequireTailDispatch || (thenValue->ResponseTarget()->GetFeatures() &
+                                  nsIEventTarget::SUPPORTS_TAIL_DISPATCH),
+        "This promise requires that Then() event targets support tail "
+        "dispatch");
     MOZ_DIAGNOSTIC_ASSERT(
         !IsExclusive || !mHaveRequest,
         "Using an exclusive promise in a non-exclusive fashion");
@@ -782,13 +854,13 @@ class MozPromise : public MozPromiseBase {
     PROMISE_LOG("%s invoking Then() [this=%p, aThenValue=%p, isPending=%d]",
                 aCallSite.get(), this, thenValue.get(), (int)IsPending());
     if (!IsPending()) {
-      thenValue->Dispatch(this);
+      thenValue->Dispatch(this, mUseSynchronousTaskDispatch,
+                          mUseDirectTaskDispatch, mPriority);
     } else {
       mThenValues.AppendElement(thenValue.forget());
     }
   }
 
- protected:
   /*
    * A command object to store all information needed to make a request to the
    * promise. This allows us to delay the request until further use is known
@@ -806,7 +878,7 @@ class MozPromise : public MozPromiseBase {
   class MOZ_TEMPORARY_CLASS ThenCommand {
     // Allow Promise1::ThenCommand to access the private constructor
     // Promise2::ThenCommand(ThenCommand&&).
-    template <typename, typename, bool>
+    template <typename, typename, bool, typename>
     friend class MozPromise;
 
     ThenCommand(StaticString aCallSite,
@@ -824,15 +896,10 @@ class MozPromise : public MozPromiseBase {
       }
     }
 
-    auto ToPromise() -> RefPtr<typename ThenValueType::PromiseType>
+    auto ToPromise()
       requires(ThenValueType::SupportChaining)
     {
-      // mCompletionPromise must be created before ThenInternal() to avoid race.
-      RefPtr promise = MakeRefPtr<typename ThenValueType::PromiseType::Private>(
-          "<completion promise>", true /* aIsCompletionPromise */);
-      mThenValue->mCompletionPromise = promise;
-      // Note ThenInternal() might nullify mCompletionPromise before return.
-      // So we need to return promise instead of mCompletionPromise.
+      RefPtr promise = mThenValue->EnsureCompletionPromise();
       mReceiver->ThenInternal(mThenValue.forget(), mCallSite);
       return promise;
     }
@@ -840,9 +907,9 @@ class MozPromise : public MozPromiseBase {
     // Allow RefPtr<MozPromise> p = somePromise->Then();
     //       p->Then(thread1, ...);
     //       p->Then(thread2, ...);
-    operator RefPtr<typename ThenValueType::PromiseType>()
-      requires(ThenValueType::SupportChaining)
-    {
+    template <std::same_as<ThenValueType> ThenValueType_ = ThenValueType>
+      requires(ThenValueType_::SupportChaining)
+    operator RefPtr<typename ThenValueType_::CompletionHolder::PromiseType>() {
       return ToPromise();
     }
 
@@ -940,7 +1007,7 @@ class MozPromise : public MozPromiseBase {
            nsIEventTarget::DispatchFlags aFlags = NS_DISPATCH_NORMAL) {
     using PromiseType = MozPromise<
         std::decay_t<std::invoke_result_t<MapResolve, ResolveValueTypeParam>>,
-        RejectValueType, IsExclusive>;
+        RejectValueType, IsExclusive, AbandonHandlerType>;
     return Then(
         aResponseTarget, aCallSite,
         [aCallSite, mapResolve = std::forward<MapResolve>(aMapResolve)](
@@ -962,10 +1029,12 @@ class MozPromise : public MozPromiseBase {
   auto MapErr(nsISerialEventTarget* aResponseTarget, StaticString aCallSite,
               MapReject&& aMapReject,
               nsIEventTarget::DispatchFlags aFlags = NS_DISPATCH_NORMAL) {
-    using PromiseType =
-        MozPromise<ResolveValueType,
-                   std::invoke_result_t<MapReject, RejectValueTypeParam>,
-                   IsExclusive>;
+    using MappedReject = std::invoke_result_t<MapReject, RejectValueTypeParam>;
+    // In the future we may want to allow a non-default abandon handler here.
+    static_assert(detail::AbandonHandlerFor<DefaultAbandonHandler<MappedReject>,
+                                            MappedReject>,
+                  "MapErr result must have a default abandon handler");
+    using PromiseType = MozPromise<ResolveValueType, MappedReject, IsExclusive>;
     return Then(
         aResponseTarget, aCallSite,
         [aCallSite, mapReject = std::forward<MapReject>(aMapReject)](
@@ -1034,22 +1103,6 @@ class MozPromise : public MozPromiseBase {
   }
 #endif
 
-  // Note we expose the function AssertIsDead() instead of IsDead() since
-  // checking IsDead() is a data race in the situation where the request is not
-  // dead. Therefore we enforce the form |Assert(IsDead())| by exposing
-  // AssertIsDead() only.
-  void AssertIsDead() override {
-    PROMISE_ASSERT(mMagic1 == sMagic && mMagic2 == sMagic &&
-                   mMagic3 == sMagic && mMagic4 == &mMutex);
-    MutexAutoLock lock(mMutex);
-    for (auto&& then : mThenValues) {
-      then->AssertIsDead();
-    }
-    for (auto&& chained : mChainedPromises) {
-      chained->AssertIsDead();
-    }
-  }
-
  protected:
   // NOTE: Methods like `IsPending()` and `Value()` are intentionally marked as
   // `protected`, as they are not safe to call from outside of the MozPromise
@@ -1070,7 +1123,8 @@ class MozPromise : public MozPromiseBase {
   void DispatchAll() {
     mMutex.AssertCurrentThreadOwns();
     for (auto&& thenValue : mThenValues) {
-      thenValue->Dispatch(this);
+      thenValue->Dispatch(this, mUseSynchronousTaskDispatch,
+                          mUseDirectTaskDispatch, mPriority);
     }
     mThenValues.Clear();
 
@@ -1091,13 +1145,29 @@ class MozPromise : public MozPromiseBase {
 
   virtual ~MozPromise() {
     PROMISE_LOG("MozPromise::~MozPromise [this=%p]", this);
-    AssertIsDead();
-    // We can't guarantee a completion promise will always be revolved or
-    // rejected since ResolveOrRejectRunnable might not run when dispatch fails.
-    if (!mIsCompletionPromise) {
-      MOZ_ASSERT(!IsPending());
-      MOZ_ASSERT(mThenValues.IsEmpty());
-      MOZ_ASSERT(mChainedPromises.IsEmpty());
+    PROMISE_ASSERT(mMagic1 == sMagic && mMagic2 == sMagic &&
+                   mMagic3 == sMagic && mMagic4 == &mMutex);
+    // If we still have any pending then values or chained promises when the
+    // last reference is dropped, we know we will never be resolved.
+    // Create a new rejected promise, and notify all chained promises and
+    // requests with it.
+    if (!mThenValues.IsEmpty() || !mChainedPromises.IsEmpty()) {
+      PROMISE_LOG("Notifying abandoned callbacks and chained promises");
+      MOZ_ASSERT(IsPending());
+      RefPtr<Private> p = MakeRefPtr<Private>("~MozPromise");
+      // Copy over dispatch configuration flags
+      p->mUseSynchronousTaskDispatch = mUseSynchronousTaskDispatch;
+      p->mUseDirectTaskDispatch = mUseDirectTaskDispatch;
+#ifdef DEBUG
+      p->mRequireTailDispatch = mRequireTailDispatch;
+#endif
+      p->mPriority = mPriority;
+      // Move over the values which need to be notified
+      p->mThenValues = std::move(mThenValues);
+      p->mChainedPromises = std::move(mChainedPromises);
+      p->mHaveRequest = mHaveRequest;
+      // Abandon the promise, notifying outstanding requests & chained promises
+      p->Abandon("<promise destructor>");
     }
 #ifdef PROMISE_DEBUG
     mMagic1 = 0;
@@ -1107,38 +1177,46 @@ class MozPromise : public MozPromiseBase {
 #endif
   };
 
-  StaticString mCreationSite;  // For logging and profiling
-  Mutex mMutex MOZ_UNANNOTATED;
+  const StaticString mCreationSite;  // For logging and profiling
+  Mutex mMutex{"MozPromise Mutex"};
+
+  // NOTE: mValue is intentionally not MOZ_GUARDED_BY(mMutex)
+  // Once the promise has settled, it will be accessed without the mutex held.
+  // Accessing mValue before settling _DOES_ require holding the mutex.
   ResolveOrRejectValue mValue;
-  bool mUseSynchronousTaskDispatch = false;
-  bool mUseDirectTaskDispatch = false;
+  bool mUseSynchronousTaskDispatch MOZ_GUARDED_BY(mMutex) = false;
+  bool mUseDirectTaskDispatch MOZ_GUARDED_BY(mMutex) = false;
 #ifdef DEBUG
-  bool mRequireTailDispatch = false;
+  bool mRequireTailDispatch MOZ_GUARDED_BY(mMutex) = false;
 #endif
-  uint32_t mPriority = nsIRunnablePriority::PRIORITY_NORMAL;
+  uint32_t mPriority MOZ_GUARDED_BY(mMutex) =
+      nsIRunnablePriority::PRIORITY_NORMAL;
 #ifdef PROMISE_DEBUG
   uint32_t mMagic1 = sMagic;
 #endif
   // Try shows we never have more than 3 elements when IsExclusive is false.
   // So '3' is a good value to avoid heap allocation in most cases.
-  AutoTArray<RefPtr<ThenValueBase>, IsExclusive ? 1 : 3> mThenValues;
+  AutoTArray<RefPtr<detail::MozPromiseThenValueBase>, IsExclusive ? 1 : 3>
+      mThenValues MOZ_GUARDED_BY(mMutex);
 #ifdef PROMISE_DEBUG
   uint32_t mMagic2 = sMagic;
 #endif
-  nsTArray<RefPtr<Private>> mChainedPromises;
+  nsTArray<RefPtr<Private>> mChainedPromises MOZ_GUARDED_BY(mMutex);
 #ifdef PROMISE_DEBUG
   uint32_t mMagic3 = sMagic;
 #endif
-  bool mHaveRequest;
-  const bool mIsCompletionPromise;
+  bool mHaveRequest MOZ_GUARDED_BY(mMutex) = false;
 #ifdef PROMISE_DEBUG
   void* mMagic4;
 #endif
 };
 
-template <typename ResolveValueT, typename RejectValueT, bool IsExclusive>
-class MozPromise<ResolveValueT, RejectValueT, IsExclusive>::Private
-    : public MozPromise<ResolveValueT, RejectValueT, IsExclusive> {
+template <typename ResolveValueT, typename RejectValueT, bool IsExclusive,
+          typename AbandonHandler>
+class MozPromise<ResolveValueT, RejectValueT, IsExclusive,
+                 AbandonHandler>::Private
+    : public MozPromise<ResolveValueT, RejectValueT, IsExclusive,
+                        AbandonHandler> {
  public:
   explicit Private(StaticString aCreationSite,
                    bool aIsCompletionPromise = false)
@@ -1177,6 +1255,23 @@ class MozPromise<ResolveValueT, RejectValueT, IsExclusive>::Private
       return;
     }
     mValue.SetReject(std::forward<RejectValueT_>(aRejectValue));
+    DispatchAll();
+  }
+
+  void Abandon(StaticString aAbandonSite) {
+    PROMISE_ASSERT(mMagic1 == sMagic && mMagic2 == sMagic &&
+                   mMagic3 == sMagic && mMagic4 == &mMutex);
+    MutexAutoLock lock(mMutex);
+    PROMISE_LOG("%s abandoning MozPromise (%p created at %s)",
+                aAbandonSite.get(), this, mCreationSite.get());
+    if (!IsPending()) {
+      PROMISE_LOG(
+          "%s ignored already resolved or rejected MozPromise (%p created at "
+          "%s)",
+          aAbandonSite.get(), this, mCreationSite.get());
+      return;
+    }
+    mValue.SetReject(AbandonHandlerType{}());
     DispatchAll();
   }
 
@@ -1273,20 +1368,6 @@ class MozPromise<ResolveValueT, RejectValueT, IsExclusive>::Private
 #endif
   }
 };
-
-// A generic promise type that does the trick for simple use cases.
-//
-// Vaguely deprecated: prefer explicitly naming the resolve- and reject-type.
-// Additionally, prefer `mozilla::Ok` as the resolve-type if the boolean's value
-// is irrelevant.
-using GenericPromise = MozPromise<bool, nsresult, /* IsExclusive = */ true>;
-
-// A generic, non-exclusive promise type that does the trick for simple use
-// cases.
-//
-// Vaguely deprecated, as above.
-using GenericNonExclusivePromise =
-    MozPromise<bool, nsresult, /* IsExclusive = */ false>;
 
 /*
  * Class to encapsulate a promise for a particular role. Use this as the member
@@ -1454,7 +1535,7 @@ class MozPromiseRequestHolder {
   MozPromiseRequestHolder() = default;
   ~MozPromiseRequestHolder() { MOZ_ASSERT(!mRequest); }
 
-  void Track(already_AddRefed<typename PromiseType::Request> aRequest) {
+  void Track(already_AddRefed<MozPromiseRequest> aRequest) {
     MOZ_DIAGNOSTIC_ASSERT(!Exists());
     mRequest = aRequest;
   }
@@ -1466,6 +1547,10 @@ class MozPromiseRequestHolder {
 
   // Disconnects and forgets an outstanding promise. The resolve/reject methods
   // will never be called.
+  //
+  // The callback object will be destroyed on the thread calling Disconnect.
+  // This usually means you want to call it only on the request's target thread,
+  // although it can technically be cancelled on any thread.
   void Disconnect() {
     MOZ_ASSERT(Exists());
     RefPtr request = std::move(mRequest);
@@ -1481,7 +1566,7 @@ class MozPromiseRequestHolder {
   bool Exists() const { return !!mRequest; }
 
  private:
-  RefPtr<typename PromiseType::Request> mRequest;
+  RefPtr<MozPromiseRequest> mRequest;
 };
 
 // Asynchronous Potentially-Cross-Thread Method Calls.
@@ -1513,7 +1598,7 @@ static auto InvokeAsync(
   auto promise = MakeRefPtr<
       typename RemoveSmartPointer<std::invoke_result_t<Function>>::Private>(
       aCallerName, true /* aIsCompletionPromise */);
-  aTarget->Dispatch(
+  nsresult rv = aTarget->Dispatch(
       NS_NewCancelableRunnableFunction(
           "InvokeAsync",
           [promise, function = std::forward<Function>(aFunction)]() mutable {
@@ -1521,6 +1606,11 @@ static auto InvokeAsync(
             result->ChainTo(promise.forget(), "<Proxy Promise>");
           }),
       aDispatchFlags);
+  if (NS_FAILED(rv)) {
+    // The task will never run, so the caller-visible promise would otherwise
+    // never settle. Abandon it so downstream consumers are notified.
+    promise->Abandon(aCallerName);
+  }
   return promise;
 }
 
@@ -1555,6 +1645,7 @@ static RefPtr<PromiseType> InvokeAsync(
 }
 
 #undef PROMISE_LOG
+#undef PROMISE_WARNING
 #undef PROMISE_ASSERT
 #undef PROMISE_DEBUG
 

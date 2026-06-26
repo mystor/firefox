@@ -518,7 +518,7 @@ class DeviceListener : public SupportsWeakPtr {
   }
 
   using DeviceOperationPromise =
-      MozPromise<nsresult, bool, /* IsExclusive = */ true>;
+      MozPromise<nsresult, nsresult, /* IsExclusive = */ true>;
 
   /**
    * Posts a task to start or stop the device associated with aTrack, based on
@@ -2470,23 +2470,25 @@ RefPtr<ConstDeviceSetPromise> MediaManager::GetPhysicalDevices() {
       CreateEnumerationParams(MediaSourceEnum::Camera,
                               MediaSourceEnum::Microphone,
                               EnumerationFlag::EnumerateAudioOutputs))
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [self = RefPtr(this), this, promises = mPendingDevicesPromises](
-              RefPtr<MediaDeviceSetRefCnt> aDevices) mutable {
-            for (auto& promiseHolder : *promises) {
-              promiseHolder.Resolve(aDevices, __func__);
-            }
-            // mPendingDevicesPromises may have changed if devices have changed.
-            if (promises == mPendingDevicesPromises) {
-              mPendingDevicesPromises = nullptr;
-              mPhysicalDevices = std::move(aDevices);
-            }
-          },
-          [](RefPtr<MediaMgrError>&& reason) {
-            MOZ_ASSERT_UNREACHABLE(
-                "MaybeRequestPermissionAndEnumerateRawDevices does not reject");
-          });
+      ->Then(GetCurrentSerialEventTarget(), __func__,
+             [self = RefPtr(this), this,
+              promises = mPendingDevicesPromises](auto&& aValue) mutable {
+               for (auto& promiseHolder : *promises) {
+                 if (aValue.IsResolve()) {
+                   promiseHolder.Resolve(aValue.ResolveValue(), __func__);
+                 } else {
+                   promiseHolder.Reject(aValue.RejectValue(), __func__);
+                 }
+               }
+               // mPendingDevicesPromises may have changed if devices have
+               // changed.
+               if (promises == mPendingDevicesPromises) {
+                 mPendingDevicesPromises = nullptr;
+                 mPhysicalDevices = aValue.IsResolve()
+                                        ? std::move(aValue.ResolveValue())
+                                        : nullptr;
+               }
+             });
 
   return mPendingDevicesPromises->AppendElement()->Ensure(__func__);
 }
@@ -2790,14 +2792,16 @@ void MediaManager::HandleDeviceListChanged() {
 
   GetPhysicalDevices()->Then(
       GetCurrentSerialEventTarget(), __func__,
-      [self = RefPtr(this), this](RefPtr<const MediaDeviceSetRefCnt> aDevices) {
+      [self = RefPtr(this), this](auto&& aValue) {
         if (!MediaManager::GetIfExists()) {
           return;
         }
 
         nsTHashSet<nsString> deviceIDs;
-        for (const auto& device : *aDevices) {
-          deviceIDs.Insert(device->mRawID);
+        if (aValue.IsResolve()) {
+          for (const auto& device : *aValue.ResolveValue()) {
+            deviceIDs.Insert(device->mRawID);
+          }
         }
         // For any real removed cameras or microphones, notify their
         // listeners cleanly that the source has stopped, so JS knows and
@@ -2824,9 +2828,6 @@ void MediaManager::HandleDeviceListChanged() {
             }
           }
         }
-      },
-      [](RefPtr<MediaMgrError>&& reason) {
-        MOZ_ASSERT_UNREACHABLE("EnumerateRawDevices does not reject");
       });
 }
 
@@ -4702,18 +4703,19 @@ auto DeviceListener::UpdateDevice(bool aOn) -> RefPtr<DeviceOperationPromise> {
              })
       ->Then(
           GetMainThreadSerialEventTarget(), __func__,
-          [self, this, &state, aOn](nsresult aResult) {
+          [self, this, &state, aOn](auto&& aValue) {
+            nsresult result = aValue.IsResolve() ? aValue.ResolveValue()
+                                                 : aValue.RejectValue();
             if (state.mStopped) {
               // Device was stopped on main thread during the operation. Done.
-              return DeviceOperationPromise::CreateAndResolve(aResult,
-                                                              __func__);
+              return DeviceOperationPromise::CreateAndResolve(result, __func__);
             }
             LOG("DeviceListener {} turning {} {} input device {}",
                 fmt::ptr(this), aOn ? "on" : "off",
                 dom::GetEnumString(GetDevice()->Kind()).get(),
-                NS_SUCCEEDED(aResult) ? "succeeded" : "failed");
+                NS_SUCCEEDED(result) ? "succeeded" : "failed");
 
-            if (NS_FAILED(aResult) && aResult != NS_ERROR_ABORT) {
+            if (NS_FAILED(result) && result != NS_ERROR_ABORT) {
               // This path handles errors from starting or stopping the
               // device. NS_ERROR_ABORT are for cases where *we* aborted. They
               // need graceful handling.
@@ -4727,11 +4729,7 @@ auto DeviceListener::UpdateDevice(bool aOn) -> RefPtr<DeviceOperationPromise> {
                 MOZ_ASSERT_UNREACHABLE("The device should be stoppable");
               }
             }
-            return DeviceOperationPromise::CreateAndResolve(aResult, __func__);
-          },
-          []() {
-            MOZ_ASSERT_UNREACHABLE("Unexpected and unhandled reject");
-            return DeviceOperationPromise::CreateAndReject(false, __func__);
+            return DeviceOperationPromise::CreateAndResolve(result, __func__);
           });
 }
 
@@ -4826,39 +4824,40 @@ void DeviceListener::SetDeviceEnabled(bool aEnable) {
             return DeviceOperationPromise::CreateAndResolve(NS_ERROR_ABORT,
                                                             __func__);
           })
-      ->Then(
-          GetMainThreadSerialEventTarget(), __func__,
-          [self, this, &state, aEnable](nsresult aResult) mutable {
-            MOZ_ASSERT_IF(aResult != NS_ERROR_ABORT,
-                          state.mDeviceEnabled == aEnable);
-            MOZ_ASSERT(state.mOperationInProgress);
-            state.mOperationInProgress = false;
+      ->Then(GetMainThreadSerialEventTarget(), __func__,
+             [self, this, &state, aEnable](const auto& aValue) mutable {
+               nsresult result = aValue.IsResolve() ? aValue.ResolveValue()
+                                                    : aValue.RejectValue();
 
-            if (state.mStopped) {
-              // Device was stopped on main thread during the operation.
-              // Nothing to do.
-              return;
-            }
+               MOZ_ASSERT_IF(result != NS_ERROR_ABORT,
+                             state.mDeviceEnabled == aEnable);
+               MOZ_ASSERT(state.mOperationInProgress);
+               state.mOperationInProgress = false;
 
-            if (NS_FAILED(aResult) && aResult != NS_ERROR_ABORT && !aEnable) {
-              // To keep our internal state sane in this case, we disallow
-              // future stops due to disable.
-              state.mOffWhileDisabled = false;
-              return;
-            }
+               if (state.mStopped) {
+                 // Device was stopped on main thread during the operation.
+                 // Nothing to do.
+                 return;
+               }
 
-            // This path is for a device operation aResult that was success or
-            // NS_ERROR_ABORT (*we* canceled the operation).
-            // At this point we have to follow up on the intended state, i.e.,
-            // update the device state if the track state changed in the
-            // meantime.
+               if (NS_FAILED(result) && result != NS_ERROR_ABORT && !aEnable) {
+                 // To keep our internal state sane in this case, we disallow
+                 // future stops due to disable.
+                 state.mOffWhileDisabled = false;
+                 return;
+               }
 
-            if (state.mTrackEnabled != state.mDeviceEnabled) {
-              // Track state changed during this operation. We'll start over.
-              SetDeviceEnabled(state.mTrackEnabled);
-            }
-          },
-          []() { MOZ_ASSERT_UNREACHABLE("Unexpected and unhandled reject"); });
+               // This path is for a device operation aResult that was success
+               // or NS_ERROR_ABORT (*we* canceled the operation).
+               // At this point we have to follow up on the intended state,
+               // i.e., update the device state if the track state changed in
+               // the meantime.
+
+               if (state.mTrackEnabled != state.mDeviceEnabled) {
+                 // Track state changed during this operation. We'll start over.
+                 SetDeviceEnabled(state.mTrackEnabled);
+               }
+             });
 }
 
 void DeviceListener::SetDeviceMuted(bool aMute) {

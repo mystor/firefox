@@ -5,6 +5,7 @@
 #ifndef mozilla_dom_AndroidWebAuthnService_h_
 #define mozilla_dom_AndroidWebAuthnService_h_
 
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/java/WebAuthnTokenManagerNatives.h"
 #include "nsIWebAuthnService.h"
 
@@ -30,6 +31,7 @@ class AndroidWebAuthnError {
  public:
   explicit AndroidWebAuthnError(const nsAString& aErrorCode)
       : mErrorCode(aErrorCode) {}
+  explicit AndroidWebAuthnError(PromiseAbandoned) : mErrorCode(kAbortError) {}
 
   nsresult GetError() const {
     if (mErrorCode.Equals(kSecurityError)) {

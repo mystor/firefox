@@ -638,10 +638,8 @@ nsTArray<RefPtr<RTCStatsPromise>> RTCRtpReceiver::GetStatsInternal(
                 return RTCStatsPromise::CreateAndResolve(std::move(aReport),
                                                          __func__);
               },
-              [] {
-                MOZ_CRASH("Unexpected reject");
-                return RTCStatsPromise::CreateAndReject(NS_ERROR_UNEXPECTED,
-                                                        __func__);
+              [](nsresult aRv) {
+                return RTCStatsPromise::CreateAndReject(aRv, __func__);
               }));
 
   if (!aSkipIceStats && GetJsepTransceiver().mTransport.mComponents) {

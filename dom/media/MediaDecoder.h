@@ -338,7 +338,7 @@ class MediaDecoder : public DecoderDoctorLifeLogger<MediaDecoder> {
   // asynchronously. Once all references are dropped the callback will be
   // invoked.
   struct ResourceSizes {
-    typedef MozPromise<size_t, size_t, true> SizeOfPromise;
+    typedef MozPromise<size_t, PromiseAbandoned, true> SizeOfPromise;
     NS_INLINE_DECL_THREADSAFE_REFCOUNTING(ResourceSizes)
     explicit ResourceSizes(MallocSizeOf aMallocSizeOf)
         : mMallocSizeOf(aMallocSizeOf), mByteSize(0), mCallback() {}

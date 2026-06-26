@@ -84,8 +84,8 @@ inline void WaitFor(MediaEventSourceImpl<Lp, void>& aEvent) {
  * differ.  Consider also WaitForResolve() and WaitForReject(), which are
  * suitable even when resolve and reject types are the same.
  */
-template <typename R, typename E, bool Exc>
-inline Result<R, E> WaitFor(const RefPtr<MozPromise<R, E, Exc>>& aPromise) {
+template <typename R, typename E, bool Exc, typename A>
+inline Result<R, E> WaitFor(const RefPtr<MozPromise<R, E, Exc, A>>& aPromise) {
   Maybe<R> success;
   Maybe<E> error;
   // Use r-value reference for exclusive promises to support move-only types.
@@ -108,8 +108,8 @@ inline Result<R, E> WaitFor(const RefPtr<MozPromise<R, E, Exc>>& aPromise) {
  * Variation on WaitFor that spins the event loop until a MozPromise has been
  * resolved.
  */
-template <typename R, typename E, bool Exc>
-inline R WaitForResolve(const RefPtr<MozPromise<R, E, Exc>>& aPromise) {
+template <typename R, typename E, bool Exc, typename A>
+inline R WaitForResolve(const RefPtr<MozPromise<R, E, Exc, A>>& aPromise) {
   Maybe<R> success;
   // Use r-value reference for exclusive promises to support move-only types.
   using RRef = typename std::conditional_t<Exc, R&&, const R&>;
@@ -128,8 +128,8 @@ inline R WaitForResolve(const RefPtr<MozPromise<R, E, Exc>>& aPromise) {
  * Variation on WaitFor that spins the event loop until a MozPromise has been
  * rejected.
  */
-template <typename R, typename E, bool Exc>
-inline E WaitForReject(const RefPtr<MozPromise<R, E, Exc>>& aPromise) {
+template <typename R, typename E, bool Exc, typename A>
+inline E WaitForReject(const RefPtr<MozPromise<R, E, Exc, A>>& aPromise) {
   Maybe<E> error;
   // Use r-value reference for exclusive promises to support move-only types.
   using RRef = typename std::conditional_t<Exc, R&&, const R&>;

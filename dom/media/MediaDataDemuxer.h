@@ -124,6 +124,8 @@ class MediaTrackDemuxer : public DecoderDoctorLifeLogger<MediaTrackDemuxer> {
    public:
     SkipFailureHolder(const MediaResult& aFailure, uint32_t aSkipped)
         : mFailure(aFailure), mSkipped(aSkipped) {}
+    explicit SkipFailureHolder(PromiseAbandoned)
+        : mFailure(NS_ERROR_MOZPROMISE_ABANDONED), mSkipped(0) {}
     MediaResult mFailure;
     uint32_t mSkipped;
   };

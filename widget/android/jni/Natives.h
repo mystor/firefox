@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/RWLock.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/UniquePtr.h"
@@ -41,12 +42,7 @@ inline NativeException NullWeakPtr() {
   return {FUNCTION_SIGNATURE};
 }
 
-namespace mozilla {
-
-template <typename ResolveValueT, typename RejectValueT, bool IsExclusive>
-class MozPromise;
-
-namespace jni {
+namespace mozilla::jni {
 
 /**
  * C++ classes implementing instance (non-static) native methods can choose
@@ -1534,7 +1530,6 @@ class NativeImpl {
 template <class C, class I>
 bool NativeImpl<C, I>::sInited;
 
-}  // namespace jni
-}  // namespace mozilla
+}  // namespace mozilla::jni
 
 #endif  // mozilla_jni_Natives_h_

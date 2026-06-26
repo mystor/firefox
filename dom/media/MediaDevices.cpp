@@ -219,9 +219,21 @@ void MediaDevices::MaybeResumeDeviceExposure() {
        haveDeviceListChange = mHaveUnprocessedDeviceListChange,
        enumerateDevicesPromises = std::move(mPendingEnumerateDevicesPromises),
        shouldResistFingerprinting](
-          RefPtr<const MediaDeviceSetRefCnt> aAllDevices) mutable {
+          ConstDeviceSetPromise::ResolveOrRejectValue&& aResult) mutable {
+        if (aResult.IsReject()) {
+          nsPIDOMWindowInner* window = GetWindowIfCurrent();
+          if (!window) {
+            return;  // Leave Promises pending after navigation by design.
+          }
+
+          for (const RefPtr<Promise>& promise : enumerateDevicesPromises) {
+            aResult.RejectValue()->Reject(promise);
+          }
+          return;
+        }
+
         RefPtr<MediaDeviceSetRefCnt> exposedDevices =
-            FilterExposedDevices(*aAllDevices);
+            FilterExposedDevices(*aResult.ResolveValue());
         if (haveDeviceListChange && !shouldResistFingerprinting) {
           if (ShouldQueueDeviceChange(*exposedDevices)) {
             NS_DispatchToCurrentThread(NS_NewRunnableFunction(
@@ -229,15 +241,12 @@ void MediaDevices::MaybeResumeDeviceExposure() {
                   DispatchTrustedEvent(u"devicechange"_ns);
                 }));
           }
-          mLastPhysicalDevices = std::move(aAllDevices);
+          mLastPhysicalDevices = std::move(aResult.ResolveValue());
         }
         if (!enumerateDevicesPromises.IsEmpty()) {
           ResumeEnumerateDevices(std::move(enumerateDevicesPromises),
                                  std::move(exposedDevices));
         }
-      },
-      [](RefPtr<MediaMgrError>&&) {
-        MOZ_ASSERT_UNREACHABLE("GetPhysicalDevices does not reject");
       });
   mHaveUnprocessedDeviceListChange = false;
 }
@@ -746,8 +755,8 @@ RefPtr<MediaDevices::SinkInfoPromise> MediaDevices::GetSinkDevice(
                                                          std::move(devices));
           },
           [](RefPtr<MediaMgrError>&& reason) {
-            MOZ_ASSERT_UNREACHABLE("GetPhysicalDevices does not reject");
-            return RefPtr<LocalDeviceSetPromise>();
+            return LocalDeviceSetPromise::CreateAndReject(std::move(reason),
+                                                          __func__);
           })
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
@@ -822,9 +831,7 @@ void MediaDevices::SetupDeviceChangeListener() {
       [self = RefPtr(this), this](RefPtr<const MediaDeviceSetRefCnt> aDevices) {
         mLastPhysicalDevices = std::move(aDevices);
       },
-      [](RefPtr<MediaMgrError>&& reason) {
-        MOZ_ASSERT_UNREACHABLE("GetPhysicalDevices does not reject");
-      });
+      [](RefPtr<MediaMgrError>&&) {});
 }
 
 void MediaDevices::SetOndevicechange(

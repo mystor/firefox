@@ -53,6 +53,8 @@ class OmxPromiseLayer {
    public:
     OmxBufferFailureHolder(OMX_ERRORTYPE aError, BufferData* aBuffer)
         : mError(aError), mBuffer(aBuffer) {}
+    explicit OmxBufferFailureHolder(PromiseAbandoned)
+        : mError(OMX_ErrorUndefined), mBuffer(nullptr) {}
 
     OMX_ERRORTYPE mError;
     BufferData* mBuffer;
@@ -67,6 +69,8 @@ class OmxPromiseLayer {
     OmxCommandFailureHolder(OMX_ERRORTYPE aErrorType,
                             OMX_COMMANDTYPE aCommandType)
         : mErrorType(aErrorType), mCommandType(aCommandType) {}
+    explicit OmxCommandFailureHolder(PromiseAbandoned)
+        : mErrorType(OMX_ErrorUndefined), mCommandType(OMX_CommandMax) {}
 
     OMX_ERRORTYPE mErrorType;
     OMX_COMMANDTYPE mCommandType;

@@ -706,6 +706,14 @@ class IOUtils::IOError {
   nsCString mMessage;
 };
 
+template <>
+struct DefaultAbandonHandler<IOUtils::IOError> {
+  IOUtils::IOError operator()() const {
+    return IOUtils::IOError(NS_ERROR_MOZPROMISE_ABANDONED,
+                            "promise abandoned"_ns);
+  }
+};
+
 /**
  * This is an easier to work with representation of a |mozilla::dom::FileInfo|
  * for private use in the IOUtils implementation.

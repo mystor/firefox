@@ -10,6 +10,7 @@
 #include <glib.h>
 #include <gtk/gtk.h>
 
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/UniquePtr.h"
 
 namespace mozilla {
@@ -39,6 +40,14 @@ struct GFreeDeleter {
 
 template <typename T>
 using GUniquePtr = UniquePtr<T, GFreeDeleter>;
+
+template <>
+struct DefaultAbandonHandler<GUniquePtr<GError>> {
+  GUniquePtr<GError> operator()() const {
+    return GUniquePtr<GError>{
+        g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "promise abandoned")};
+  }
+};
 
 }  // namespace mozilla
 

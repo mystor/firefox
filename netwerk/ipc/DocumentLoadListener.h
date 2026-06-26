@@ -117,6 +117,15 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
     // be cancelled, as the load is logically continuing within the current
     // browsing session, just within a different process or browsing context.
     bool mContinueNavigating = false;
+
+    OpenPromiseFailedType(nsresult aStatus, nsresult aLoadGroupStatus,
+                          bool aContinueNavigating = false)
+        : mStatus(aStatus),
+          mLoadGroupStatus(aLoadGroupStatus),
+          mContinueNavigating(aContinueNavigating) {}
+    explicit OpenPromiseFailedType(PromiseAbandoned)
+        : mStatus(NS_ERROR_MOZPROMISE_ABANDONED),
+          mLoadGroupStatus(NS_ERROR_MOZPROMISE_ABANDONED) {}
   };
 
   using OpenPromise =
@@ -620,9 +629,9 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
     // It is possible for mOpenPromise to not be set if AsyncOpen failed and
     // the DocumentChannel got canceled.
     if (!mOpenPromiseResolved && mOpenPromise) {
-      mOpenPromise->Reject(OpenPromiseFailedType({aStatus, aLoadGroupStatus,
-                                                  aContinueNavigating}),
-                           aLocation);
+      mOpenPromise->Reject(
+          OpenPromiseFailedType(aStatus, aLoadGroupStatus, aContinueNavigating),
+          aLocation);
       mOpenPromiseResolved = true;
     }
   }

@@ -107,7 +107,8 @@ class MediaEncoder {
  public:
   using BlobPromise =
       MozPromise<RefPtr<dom::BlobImpl>, nsresult, false /* IsExclusive */>;
-  using SizeOfPromise = MozPromise<size_t, size_t, true /* IsExclusive */>;
+  using SizeOfPromise =
+      MozPromise<size_t, PromiseAbandoned, true /* IsExclusive */>;
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaEncoder)
 

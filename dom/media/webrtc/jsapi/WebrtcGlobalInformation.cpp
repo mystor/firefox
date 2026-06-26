@@ -26,6 +26,7 @@
 #include "mozilla/dom/PWebrtcGlobalChild.h"
 #include "mozilla/dom/RTCStatsReportBinding.h"  // for RTCStatsReportInternal
 #include "mozilla/dom/WebrtcGlobalInformationBinding.h"
+#include "mozilla/ipc/MessageChannel.h"
 #include "nsISupports.h"
 #include "nsITimer.h"
 #include "nsLiteralString.h"
@@ -139,8 +140,12 @@ GetStatsPromiseForThisProcess(const nsAString& aPcIdFilter) {
 
   auto UnwrapUniquePtrs = [](dom::RTCStatsReportPromise::AllSettledPromiseType::
                                  ResolveOrRejectValue&& aResult) {
+    if (aResult.IsReject()) {
+      return PWebrtcGlobalParent::GetStatsPromise::CreateAndReject(
+          mozilla::ipc::ResponseRejectReason::PromiseAbandoned, __func__);
+    }
+
     nsTArray<dom::RTCStatsReportInternal> reports;
-    MOZ_RELEASE_ASSERT(aResult.IsResolve(), "AllSettled should never reject!");
     for (auto& reportResult : aResult.ResolveValue()) {
       if (reportResult.IsResolve()) {
         reports.AppendElement(std::move(*reportResult.ResolveValue()));
@@ -322,20 +327,20 @@ void WebrtcGlobalInformation::GetAllStats(
                    ResolveOrRejectValue&& aResult) MOZ_CAN_RUN_SCRIPT_BOUNDARY {
         std::set<nsString> pcids;
         WebrtcGlobalStatisticsReport flattened;
-        MOZ_RELEASE_ASSERT(aResult.IsResolve(),
-                           "AllSettled should never reject!");
         // Flatten stats from content processes and parent process.
         // The stats from the parent process (which will come last) might
         // contain some stale content-process stats, so skip those.
-        for (auto& processResult : aResult.ResolveValue()) {
-          // TODO: Report rejection on individual content processes someday?
-          if (processResult.IsResolve()) {
-            for (auto& pcStats : processResult.ResolveValue()) {
-              if (!pcids.count(pcStats.mPcid)) {
-                pcids.insert(pcStats.mPcid);
-                if (!flattened.mReports.AppendElement(std::move(pcStats),
-                                                      fallible)) {
-                  mozalloc_handle_oom(0);
+        if (aResult.IsResolve()) {
+          for (auto& processResult : aResult.ResolveValue()) {
+            // TODO: Report rejection on individual content processes someday?
+            if (processResult.IsResolve()) {
+              for (auto& pcStats : processResult.ResolveValue()) {
+                if (!pcids.count(pcStats.mPcid)) {
+                  pcids.insert(pcStats.mPcid);
+                  if (!flattened.mReports.AppendElement(std::move(pcStats),
+                                                        fallible)) {
+                    mozalloc_handle_oom(0);
+                  }
                 }
               }
             }

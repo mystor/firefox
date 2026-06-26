@@ -6,6 +6,7 @@
 #define PerfStats_h
 
 #include "mozilla/Atomics.h"
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/TimeStamp.h"
 #include <limits>
@@ -87,10 +88,6 @@ extern "C" bool NS_IsMainThread();
   MACRO(UrlClassifierCheckChannel)
 
 namespace mozilla {
-
-template <typename ResolveValueT, typename RejectValueT, bool IsExclusive>
-class MozPromise;
-
 namespace dom {
 // Forward declaration.
 class ContentParent;

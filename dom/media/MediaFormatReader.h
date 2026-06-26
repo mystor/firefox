@@ -32,10 +32,13 @@ class MediaResource;
 class VideoFrameContainer;
 
 struct WaitForDataRejectValue {
-  enum Reason { SHUTDOWN, CANCELED };
+  enum Reason { SHUTDOWN, CANCELED, ABANDONED };
 
   WaitForDataRejectValue(MediaData::Type aType, Reason aReason)
       : mType(aType), mReason(aReason) {}
+  explicit WaitForDataRejectValue(PromiseAbandoned)
+      : mType(MediaData::Type::NULL_DATA),
+        mReason(WaitForDataRejectValue::ABANDONED) {}
   MediaData::Type mType;
   Reason mReason;
 };

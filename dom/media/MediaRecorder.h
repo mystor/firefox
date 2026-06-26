@@ -103,7 +103,7 @@ class MediaRecorder final : public DOMEventTargetHelper,
    * Measure the size of the buffer, and heap memory in bytes occupied by
    * mAudioEncoder and mVideoEncoder.
    */
-  typedef MozPromise<size_t, size_t, true> SizeOfPromise;
+  typedef MozPromise<size_t, PromiseAbandoned, true> SizeOfPromise;
   RefPtr<SizeOfPromise> SizeOfExcludingThis(
       mozilla::MallocSizeOf aMallocSizeOf);
   // EventHandler

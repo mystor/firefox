@@ -1868,7 +1868,7 @@ nsresult FetchEventOp::DispatchFetchEvent(JSContext* aCx,
                                          std::move(aPreloadResponse), nullptr));
               }
             },
-            [self](int) {
+            [self](PromiseAbandoned) {
               self->mPreloadResponseAvailablePromiseRequestHolder.Complete();
             })
         ->Track(mPreloadResponseAvailablePromiseRequestHolder);
@@ -1893,7 +1893,7 @@ nsresult FetchEventOp::DispatchFetchEvent(JSContext* aCx,
               }
               self->mPreloadResponseTimingPromiseRequestHolder.Complete();
             },
-            [self](int) {
+            [self](PromiseAbandoned) {
               self->mPreloadResponseTimingPromiseRequestHolder.Complete();
             })
         ->Track(mPreloadResponseTimingPromiseRequestHolder);
@@ -1914,7 +1914,7 @@ nsresult FetchEventOp::DispatchFetchEvent(JSContext* aCx,
                 }
               }
             },
-            [self](int) {
+            [self](PromiseAbandoned) {
               self->mPreloadResponseEndPromiseRequestHolder.Complete();
             })
         ->Track(mPreloadResponseEndPromiseRequestHolder);

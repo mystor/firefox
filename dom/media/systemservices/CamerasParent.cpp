@@ -1105,7 +1105,8 @@ ipc::IPCResult CamerasParent::RecvGetCaptureCapability(
   LOG("RecvGetCaptureCapability: {} {}", PromiseFlatCString(aUniqueId).get(),
       aIndex);
 
-  using Promise = MozPromise<webrtc::VideoCaptureCapability, int, true>;
+  using Promise = MozPromise<webrtc::VideoCaptureCapability, int, true,
+                             /* AbandonHandler */ decltype([] { return -3; })>;
   InvokeAsync(mVideoCaptureThread->GetEventTarget(), __func__,
               [this, self = RefPtr(this), id = nsCString(aUniqueId), aCapEngine,
                aIndex] {
@@ -1800,7 +1801,7 @@ auto CamerasParent::RequestCameraAccess(bool aAllowPermissionRequest)
             aStatus, "CamerasParent::RequestCameraAccess resolve");
       },
       [promise = RefPtr(sCameraAccessRequestPromise.get()),
-       aAllowPermissionRequest](void_t aRv) {
+       aAllowPermissionRequest](PromiseAbandoned aRv) {
         if (promise == sCameraAccessRequestPromise) {
           sCameraAccessRequestPromise = nullptr;
           return CameraAccessRequestPromise::CreateAndResolve(

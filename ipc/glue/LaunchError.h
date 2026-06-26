@@ -5,6 +5,7 @@
 #ifndef mozilla_ipc_LaunchError_h
 #define mozilla_ipc_LaunchError_h
 
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/StaticString.h"
 #include "nsError.h"  // for nsresult
 
@@ -54,6 +55,11 @@ class LaunchError {
   // By design, `nsresult` does not implicitly coerce to an integer.
   LaunchError(StaticString aFunction, nsresult aError)
       : mFunction(aFunction), mError((ErrorType)aError) {}
+
+  // Support constructing from promise abandonment.
+  explicit LaunchError(PromiseAbandoned)
+      : mFunction("<promise abandoned>"),
+        mError((ErrorType)NS_ERROR_MOZPROMISE_ABANDONED) {}
 
   StaticString FunctionName() const { return mFunction; }
   ErrorType ErrorCode() const { return mError; }

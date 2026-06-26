@@ -1343,10 +1343,9 @@ RefPtr<RTCStatsPromise> RTCRtpTransceiver::ApplyCodecStats(
                   *payloadTypes = std::move(aPayloadTypes);
                   return allPromise;
                 },
-                [] {
-                  MOZ_CRASH("Unexpected reject");
+                [](nsresult aRv) {
                   return RTCStatsPromise::AllPromiseType::CreateAndReject(
-                      NS_ERROR_UNEXPECTED, __func__);
+                      aRv, __func__);
                 })
             ->Then(
                 GetMainThreadSerialEventTarget(), __func__,
@@ -1419,10 +1418,8 @@ RefPtr<RTCStatsPromise> RTCRtpTransceiver::ApplyCodecStats(
                   return RTCStatsPromise::CreateAndResolve(std::move(report),
                                                            __func__);
                 },
-                [] {
-                  MOZ_CRASH("Unexpected reject");
-                  return RTCStatsPromise::CreateAndReject(NS_ERROR_UNEXPECTED,
-                                                          __func__);
+                [](nsresult aRv) {
+                  return RTCStatsPromise::CreateAndReject(aRv, __func__);
                 }));
   }
 
@@ -1448,10 +1445,8 @@ RefPtr<RTCStatsPromise> RTCRtpTransceiver::ApplyCodecStats(
             return RTCStatsPromise::CreateAndResolve(std::move(finalStats),
                                                      __func__);
           },
-          [] {
-            MOZ_CRASH("Unexpected reject");
-            return RTCStatsPromise::CreateAndReject(NS_ERROR_UNEXPECTED,
-                                                    __func__);
+          [](nsresult aRv) {
+            return RTCStatsPromise::CreateAndReject(aRv, __func__);
           });
 }
 

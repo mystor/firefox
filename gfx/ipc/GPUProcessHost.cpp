@@ -191,7 +191,8 @@ void GPUProcessHost::InitAfterConnect(bool aSucceeded) {
             [] {
               java::CompositorSurfaceManager::LocalRef csm =
                   java::GeckoProcessManager::GetCompositorSurfaceManager();
-              return MozPromise<java::CompositorSurfaceManager::GlobalRef, Ok,
+              return MozPromise<java::CompositorSurfaceManager::GlobalRef,
+                                PromiseAbandoned,
                                 true>::CreateAndResolve(csm, __func__);
             })
             ->Map(GetCurrentSerialEventTarget(), __func__,

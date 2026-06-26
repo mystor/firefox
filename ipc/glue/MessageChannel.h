@@ -10,6 +10,7 @@
 #include "mozilla/BaseProfilerMarkers.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/Monitor.h"
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/MoveOnlyFunction.h"
 #if defined(XP_WIN)
 #  include "mozilla/ipc/Neutering.h"
@@ -83,6 +84,7 @@ enum class ResponseRejectReason {
   HandlerRejected,
   ActorDestroyed,
   ResolverDestroyed,
+  PromiseAbandoned,
   EndGuard_,
 };
 
@@ -758,6 +760,14 @@ class MessageChannel : HasResultCodes {
 void CancelCPOWs();
 
 }  // namespace ipc
+
+template <>
+struct DefaultAbandonHandler<mozilla::ipc::ResponseRejectReason> {
+  mozilla::ipc::ResponseRejectReason operator()() const {
+    return mozilla::ipc::ResponseRejectReason::PromiseAbandoned;
+  }
+};
+
 }  // namespace mozilla
 
 namespace IPC {

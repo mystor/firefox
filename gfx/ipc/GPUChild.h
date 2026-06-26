@@ -31,7 +31,7 @@ class GPUChild final : public mozilla::ipc::CrashReporterHelper<GPUChild>,
 
   explicit GPUChild(GPUProcessHost* aHost);
 
-  using InitPromiseType = MozPromise<Ok, Ok, true>;
+  using InitPromiseType = MozPromise<Ok, PromiseAbandoned, true>;
   RefPtr<InitPromiseType> Init();
 
   bool IsGPUReady() const { return mGPUReady; }

@@ -14,8 +14,8 @@
 namespace mozilla {
 
 // Pending clear operations are stored as ClearDataMozPromise, one per host.
-using ClearDataMozPromise =
-    MozPromise<RefPtr<BounceTrackingPurgeEntry>, uint32_t, true>;
+using ClearDataMozPromise = MozPromise<RefPtr<BounceTrackingPurgeEntry>,
+                                       uint32_t, true, ValueAbandonHandler<0u>>;
 
 extern LazyLogModule gBounceTrackingProtectionLog;
 

@@ -483,11 +483,10 @@ mozilla::ipc::IPCResult APZInputBridgeChild::RecvLayerTransforms(
   if (NS_IsMainThread()) {
     NotifyLayerTransformsOnMainThread(std::move(aTransforms));
   } else {
-    NS_DispatchToMainThread(
-        NewRunnableMethod<StoreCopyPassByRRef<nsTArray<MatrixMessage>>>(
-            "layers::APZInputBridgeChild::NotifyLayerTransformsOnMainThread",
-            this, &APZInputBridgeChild::NotifyLayerTransformsOnMainThread,
-            std::move(aTransforms)));
+    NS_DispatchToMainThread(NewRunnableMethod<nsTArray<MatrixMessage>>(
+        "layers::APZInputBridgeChild::NotifyLayerTransformsOnMainThread", this,
+        &APZInputBridgeChild::NotifyLayerTransformsOnMainThread,
+        std::move(aTransforms)));
   }
   return IPC_OK();
 }

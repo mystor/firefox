@@ -23,7 +23,8 @@ class WindowGlobalParent;
 // IPCSerialPortInfo of the port the user picked, or rejects with a
 // RequestPortReason describing why the chooser did not grant a port.
 using SerialChooserPromise =
-    MozPromise<IPCSerialPortInfo, RequestPortReason, /* IsExclusive */ true>;
+    MozPromise<IPCSerialPortInfo, RequestPortReason, /* IsExclusive */ true,
+               ValueAbandonHandler<RequestPortReason::InternalError>>;
 
 // Parent-process implementation of nsIContentPermissionRequest used to drive
 // the WebSerial chooser. The chrome prompt service routes "serial" requests

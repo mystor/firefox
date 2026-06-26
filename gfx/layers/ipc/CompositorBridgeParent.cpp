@@ -1158,7 +1158,8 @@ CompositorBridgeParent::AllocPWebRenderBridgeParent(
               self->mWrApiResult.emplace(Err(aResult.RejectValue()));
             }
             lock.NotifyAll();
-            return MozPromise<Ok, Ok, true>::CreateAndResolve(Ok{}, __func__);
+            return MozPromise<Ok, PromiseAbandoned, true>::CreateAndResolve(
+                Ok{}, __func__);
           })
       ->Then(GetCurrentSerialEventTarget(), __func__, [self = RefPtr{this}]() {
         // Then finally complete WebRenderBridgeParent initialization back on

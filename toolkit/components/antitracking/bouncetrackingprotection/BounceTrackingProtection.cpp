@@ -1041,7 +1041,11 @@ BounceTrackingProtection::PurgeBounceTrackers() {
                 [resultPromise,
                  self](ClearDataMozPromise::AllSettledPromiseType::
                            ResolveOrRejectValue&& aResults) {
-                  MOZ_ASSERT(aResults.IsResolve(), "AllSettled never rejects");
+                  if (aResults.IsReject()) {
+                    resultPromise->Reject(NS_ERROR_MOZPROMISE_ABANDONED,
+                                          __func__);
+                    return;
+                  }
 
                   MOZ_LOG_FMT(gBounceTrackingProtectionLog, LogLevel::Debug,
                               "{}: Done. Cleared {} hosts.", __FUNCTION__,

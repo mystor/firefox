@@ -282,7 +282,10 @@ class MediaTransportHandlerSTS : public MediaTransportHandler,
   std::set<std::string> mSignaledAddresses;
 
   // Init can only be done on main, but we want this to be usable on any thread
-  using InitPromise = MozPromise<bool, std::string, false>;
+  using InitPromise = MozPromise<bool, std::string, false,
+                                 /* AbandonHandler */ decltype([] {
+                                   return "promise abandoned";
+                                 })>;
   RefPtr<InitPromise> mInitPromise;
 };
 

@@ -23,7 +23,6 @@
 
 namespace mozilla {
 
-LazyLogModule gMozPromiseLog("MozPromise");
 LazyLogModule gStateWatchingLog("StateWatching");
 
 StaticRefPtr<AbstractThread> sMainThread;

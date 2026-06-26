@@ -376,11 +376,8 @@ mozilla::ipc::IPCResult CompositorManagerParent::RecvReportMemory(
   // an intermediate MozPromise instead.
   wr::RenderThread::AccumulateMemoryReport(aggregate)->Then(
       CompositorThread(), __func__,
-      [resolver = std::move(aResolver)](MemoryReport aReport) {
-        resolver(aReport);
-      },
-      [](bool) {
-        MOZ_ASSERT_UNREACHABLE("MemoryReport promises are never rejected");
+      [resolver = std::move(aResolver), aggregate](auto&& aResult) mutable {
+        resolver(aResult.IsResolve() ? aResult.ResolveValue() : aggregate);
       });
 
   return IPC_OK();

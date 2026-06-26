@@ -61,7 +61,8 @@ class AudioInputSource : public CubebInputStream::Listener {
   void Stop();
   // Set the params to be applied in the platform for this source.
   using SetRequestedProcessingParamsPromise =
-      MozPromise<cubeb_input_processing_params, int, true>;
+      MozPromise<cubeb_input_processing_params, int, true,
+                 ValueAbandonHandler<CUBEB_ERROR>>;
   RefPtr<SetRequestedProcessingParamsPromise> SetRequestedProcessingParams(
       cubeb_input_processing_params aParams);
   // Returns the AudioSegment with aDuration of data inside.

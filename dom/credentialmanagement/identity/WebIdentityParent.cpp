@@ -327,7 +327,7 @@ RefPtr<GetIPCIdentityCredentialPromise> DiscoverFromExternalSourceInMainProcess(
             return PromptUserToSelectProvider(
                 browsingContext, aOptions.mProviders, resultsSequence);
           },
-          [](bool error) {
+          [](PromiseAbandoned error) {
             return GetIdentityProviderRequestOptionsWithManifestPromise::
                 CreateAndReject(NS_ERROR_FAILURE, __func__);
           })

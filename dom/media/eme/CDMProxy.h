@@ -28,6 +28,7 @@ enum DecryptStatus {
   GenericErr = 1,
   NoKeyErr = 2,
   AbortedErr = 3,
+  AbandonedErr = 4,
 };
 }
 
@@ -36,6 +37,8 @@ using eme::DecryptStatus;
 struct DecryptResult {
   DecryptResult(DecryptStatus aStatus, MediaRawData* aSample)
       : mStatus(aStatus), mSample(aSample) {}
+  explicit DecryptResult(PromiseAbandoned)
+      : mStatus(DecryptStatus::AbandonedErr) {}
   DecryptStatus mStatus;
   RefPtr<MediaRawData> mSample;
 };

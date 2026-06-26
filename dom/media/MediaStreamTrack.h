@@ -5,6 +5,7 @@
 #ifndef MEDIASTREAMTRACK_H_
 #define MEDIASTREAMTRACK_H_
 
+#include "MediaStreamError.h"
 #include "MediaTrackConstraints.h"
 #include "PerformanceRecorder.h"
 #include "PrincipalChangeObserver.h"
@@ -34,7 +35,6 @@ class PeerIdentity;
 class ProcessedMediaTrack;
 class RemoteSourceStreamInfo;
 class SourceStreamInfo;
-class MediaMgrError;
 
 namespace dom {
 

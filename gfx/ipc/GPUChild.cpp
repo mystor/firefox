@@ -78,7 +78,8 @@ RefPtr<GPUChild::InitPromiseType> GPUChild::Init() {
                 return InitPromiseType::CreateAndResolve(Ok{}, __func__);
               },
               [](ipc::ResponseRejectReason) {
-                return InitPromiseType::CreateAndReject(Ok{}, __func__);
+                return InitPromiseType::CreateAndReject(PromiseAbandoned{},
+                                                        __func__);
               });
 
   gfxVars::AddReceiver(this);

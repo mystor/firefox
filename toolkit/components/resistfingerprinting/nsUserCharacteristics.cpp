@@ -138,7 +138,11 @@ using FunctionName = nsCString;
 using AdditionalContext = nsCString;
 using PopulatePromiseBase =
     MozPromise<void_t, std::tuple<FunctionName, nsresult, AdditionalContext>,
-               false>;
+               false, /* AbandonHandler */ decltype([] {
+                 return std::tuple<FunctionName, nsresult, AdditionalContext>(
+                     "PopulatePromise"_ns, NS_ERROR_MOZPROMISE_ABANDONED,
+                     "promise abandoned"_ns);
+               })>;
 using PopulatePromise = PopulatePromiseBase::Private;
 
 #define REJECT(aPromise, aFuncName, aRv, aError)                          \
@@ -862,8 +866,6 @@ already_AddRefed<PopulatePromise> PopulateMediaDevices() {
         populatePromise->Resolve(void_t(), __func__);
       },
       [=](RefPtr<MediaMgrError>&& reason) {
-        // GetPhysicalDevices() never rejects but we'll add the following
-        // just in case it changes in the future
         reason->mMessage.StripChar(',');
         REJECT(populatePromise, "PopulateMediaDevices", NS_ERROR_FAILURE,
                reason->mMessage);
@@ -1041,6 +1043,13 @@ void PopulateFontRenderingSettings() {
 void PopulateErrors(
     const PopulatePromise::AllSettledPromiseType::ResolveOrRejectValue&
         results) {
+  if (results.IsReject()) {
+    MOZ_LOG(gUserCharacteristicsLog, mozilla::LogLevel::Error,
+            ("Error encountered: AllSettledPromise abandoned"));
+    glean::characteristics::errors.Set("AllSettledPromise abandoned"_ns);
+    return;
+  }
+
   nsCString errors;
   for (const auto& result : results.ResolveValue()) {
     if (!result.IsReject()) {
@@ -1267,31 +1276,6 @@ void PopulateModelName() {
 #endif
 
   glean::characteristics::machine_model_name.Set(modelName);
-}
-
-const RefPtr<PopulatePromise>& TimoutPromise(
-    const RefPtr<PopulatePromise>& promise, uint32_t delay,
-    const nsCString& funcName) {
-  nsCOMPtr<nsITimer> timeout;
-  nsresult rv = NS_NewTimerWithCallback(
-      getter_AddRefs(timeout),
-      [=](auto) {
-        // NOTE: has no effect if `promise` has already been resolved.
-        REJECT(promise, funcName, NS_ERROR_FAILURE, "TIMEOUT");
-      },
-      delay, nsITimer::TYPE_ONE_SHOT, "UserCharacteristicsPromiseTimeout"_ns);
-  if (NS_FAILED(rv)) {
-    REJECT(promise, funcName, rv, "TIMEOUT_CREATION");
-  }
-
-  auto cancelTimeoutRes = [timeout = std::move(timeout)]() {
-    timeout->Cancel();
-  };
-  auto cancelTimeoutRej = cancelTimeoutRes;
-  promise->Then(GetCurrentSerialEventTarget(), __func__,
-                std::move(cancelTimeoutRes), std::move(cancelTimeoutRej));
-
-  return promise;
 }
 
 // ==================================================================

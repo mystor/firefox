@@ -1593,7 +1593,7 @@ MediaMemoryTracker::CollectReports(nsIHandleReportCallback* aHandleReport,
           imgr->EndReport();
         }
       },
-      [](size_t) { /* unused reject function */ });
+      [](PromiseAbandoned) { /* unused reject function */ });
 
   int64_t video = 0;
   int64_t audio = 0;

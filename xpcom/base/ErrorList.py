@@ -177,6 +177,10 @@ with modules["XPCOM"]:
     errors["NS_ERROR_LOSS_OF_SIGNIFICANT_DATA"] = FAILURE(3)
     # Result code used by nsIThreadManager
     errors["NS_ERROR_NOT_SAME_THREAD"] = FAILURE(4)
+    # Injected by MozPromise into the reject value of a promise which could not
+    # otherwise be settled, e.g. because dispatching a `Then` callback failed
+    # during shutdown. See xpcom/threads/MozPromise.h.
+    errors["NS_ERROR_MOZPROMISE_ABANDONED"] = FAILURE(50)
     # Various operations are not permitted during XPCOM shutdown and will fail
     # with this exception.
     errors["NS_ERROR_ILLEGAL_DURING_SHUTDOWN"] = FAILURE(30)

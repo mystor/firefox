@@ -47,8 +47,8 @@ class WindowContext;
 class WindowGlobalParent;
 }  // namespace dom
 
-using ClearDataMozPromise =
-    MozPromise<RefPtr<BounceTrackingPurgeEntry>, uint32_t, true>;
+using ClearDataMozPromise = MozPromise<RefPtr<BounceTrackingPurgeEntry>,
+                                       uint32_t, true, ValueAbandonHandler<0u>>;
 
 extern LazyLogModule gBounceTrackingProtectionLog;
 

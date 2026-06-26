@@ -6,12 +6,7 @@
 #define mozilla_dom_serviceworkerunregisterjob_h
 
 #include "ServiceWorkerJob.h"
-
-namespace mozilla {
-template <typename ResolveValueT, typename RejectValueT, bool IsExclusive>
-class MozPromise;
-using GenericPromise = MozPromise<bool, nsresult, /* IsExclusive = */ true>;
-}  // namespace mozilla
+#include "mozilla/MozPromiseFwd.h"
 
 namespace mozilla::dom {
 

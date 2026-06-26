@@ -6,6 +6,7 @@
 #define mozilla_dom_MediaStreamError_h
 
 #include "js/TypeDecls.h"
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/RefPtr.h"
 #include "nsPIDOMWindow.h"
 #include "nsWrapperCache.h"
@@ -98,6 +99,14 @@ class MediaStreamError final : public nsISupports,
 };
 
 }  // namespace dom
+
+template <>
+struct DefaultAbandonHandler<RefPtr<MediaMgrError>> {
+  RefPtr<MediaMgrError> operator()() const {
+    return MakeRefPtr<MediaMgrError>(BaseMediaMgrError::Name::AbortError,
+                                     "promise abandoned");
+  }
+};
 }  // namespace mozilla
 
 #endif

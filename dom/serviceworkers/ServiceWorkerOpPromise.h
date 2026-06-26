@@ -6,11 +6,22 @@
 #define mozilla_dom_serviceworkeroppromise_h_
 
 #include "mozilla/MozPromise.h"
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/Result.h"
 #include "mozilla/dom/SafeRefPtr.h"
 #include "mozilla/dom/ServiceWorkerOpArgs.h"
 
-namespace mozilla::dom {
+namespace mozilla {
+
+template <>
+struct DefaultAbandonHandler<dom::CancelInterceptionArgs> {
+  dom::CancelInterceptionArgs operator()() const {
+    return dom::CancelInterceptionArgs(NS_ERROR_MOZPROMISE_ABANDONED,
+                                       dom::FetchEventTimeStamps{});
+  }
+};
+
+namespace dom {
 
 class InternalResponse;
 
@@ -24,16 +35,14 @@ using FetchEventRespondWithResult =
 using FetchEventRespondWithPromise =
     MozPromise<FetchEventRespondWithResult, CancelInterceptionArgs, true>;
 
-// The reject type int is arbitrary, since this promise will never get rejected.
-// Unfortunately void is not supported as a reject type.
 using FetchEventPreloadResponseAvailablePromise =
-    MozPromise<SafeRefPtr<InternalResponse>, int, true>;
+    MozPromise<SafeRefPtr<InternalResponse>, PromiseAbandoned, true>;
 
 using FetchEventPreloadResponseTimingPromise =
-    MozPromise<ResponseTiming, int, true>;
+    MozPromise<ResponseTiming, PromiseAbandoned, true>;
 
 using FetchEventPreloadResponseEndPromise =
-    MozPromise<ResponseEndArgs, int, true>;
+    MozPromise<ResponseEndArgs, PromiseAbandoned, true>;
 
 using ServiceWorkerOpPromise =
     MozPromise<ServiceWorkerOpResult, nsresult, true>;
@@ -45,6 +54,7 @@ using PushHandledPromise = MozPromise<Ok, nsresult, /* IsExclusive = */ true>;
 using ServiceWorkerFetchEventOpPromise =
     MozPromise<ServiceWorkerFetchEventOpResult, nsresult, true>;
 
-}  // namespace mozilla::dom
+}  // namespace dom
+}  // namespace mozilla
 
 #endif  // mozilla_dom_serviceworkeroppromise_h_

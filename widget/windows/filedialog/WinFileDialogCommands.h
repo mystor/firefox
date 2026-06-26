@@ -23,12 +23,13 @@ namespace mozilla::widget::filedialog {
 
 namespace detail {
 
-template <typename T, typename E, bool B>
+template <typename T, typename E, bool B, typename A>
 struct PromiseInfo {
   using ResolveT = T;
   using RejectT = E;
   constexpr static const bool IsExclusive = B;
-  using Promise = MozPromise<T, E, B>;
+  using AbandonHandlerT = A;
+  using Promise = MozPromise<T, E, B, A>;
 };
 
 template <typename P>
@@ -38,9 +39,9 @@ auto DestructurePromiseImpl(P&&) {
   static_assert(false, "expected P = RefPtr<MozPromise< ... >>");
 }
 
-template <typename T, typename E, bool B>
-auto DestructurePromiseImpl(RefPtr<MozPromise<T, E, B>>&&)
-    -> PromiseInfo<T, E, B>;
+template <typename T, typename E, bool B, typename A>
+auto DestructurePromiseImpl(RefPtr<MozPromise<T, E, B, A>>&&)
+    -> PromiseInfo<T, E, B, A>;
 
 template <typename P>
 using DestructurePromise =
@@ -131,6 +132,7 @@ struct Error {
         "IShellItemArray::GetCount"_ns,
         "IShellItemArray::GetItemAt"_ns,
         "MakeFileDialog"_ns,
+        "MozPromise abandoned"_ns,
         "NS_NewNamedThread"_ns,
         "Save + FOS_ALLOWMULTISELECT"_ns,
         "ShowFilePicker"_ns,
@@ -226,6 +228,24 @@ struct Error {
 
 // Create a filedialog::Error of kind LocalError (the usual case).
 #define MOZ_FD_LOCAL_ERROR(where_, why_) MOZ_FD_ERROR(LocalError, where_, why_)
+
+}  // namespace mozilla::widget::filedialog
+
+namespace mozilla {
+
+template <>
+struct DefaultAbandonHandler<widget::filedialog::Error> {
+  widget::filedialog::Error operator()() const {
+    using Error = widget::filedialog::Error;
+    return Error{.kind = Error::LocalError,
+                 .where = Error::Location::FromString("MozPromise abandoned"),
+                 .why = static_cast<uint32_t>(NS_ERROR_MOZPROMISE_ABANDONED)};
+  }
+};
+
+}  // namespace mozilla
+
+namespace mozilla::widget::filedialog {
 
 template <typename R>
 using Promise = MozPromise<R, Error, true>;

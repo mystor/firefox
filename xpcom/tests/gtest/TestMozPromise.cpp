@@ -16,8 +16,16 @@
 
 using namespace mozilla;
 
-typedef MozPromise<int, double, false> TestPromise;
-typedef MozPromise<int, double, true /* exclusive */> TestPromiseExcl;
+struct DoubleError {
+  MOZ_IMPLICIT DoubleError(double aValue) : mValue(aValue) {}
+  explicit DoubleError(PromiseAbandoned)
+      : mValue(mozilla::UnspecifiedNaN<double>()) {}
+  MOZ_IMPLICIT operator double() const { return mValue; }
+  double mValue = 0.0;
+};
+
+typedef MozPromise<int, DoubleError, false> TestPromise;
+typedef MozPromise<int, DoubleError, true /* exclusive */> TestPromiseExcl;
 typedef TestPromise::ResolveOrRejectValue RRValue;
 
 class MOZ_STACK_CLASS AutoTaskQueue {
@@ -881,10 +889,14 @@ TEST(MozPromise, RequireTailDispatchWithoutSupportDeathTest)
 
 TEST(MozPromise, FallibleThenOnShutdownTarget)
 {
-  // NOTE: There are no assertions in this test, this test is instead just
-  // ensuring that we don't hit an assertion failure while executing the test.
   AutoTaskQueue atq;
   RefPtr<TaskQueue> queue = atq.Queue();
+
+  // Shut down the queue before resolving promise.
+  queue->BeginShutdown();
+  queue->AwaitShutdownAndIdle();
+
+  int ranChain = 0;
 
   RefPtr promise = MakeRefPtr<TestPromise::Private>(__func__);
   promise
@@ -894,17 +906,145 @@ TEST(MozPromise, FallibleThenOnShutdownTarget)
           NS_DISPATCH_FALLIBLE)
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
-          [&](auto&&) { MOZ_CRASH("unreached"); }, NS_DISPATCH_FALLIBLE);
+          [&](const TestPromise::ResolveOrRejectValue& aValue) {
+            EXPECT_TRUE(aValue.IsReject());
+            EXPECT_TRUE(std::isnan(aValue.RejectValue()));
+            ++ranChain;
+          },
+          NS_DISPATCH_FALLIBLE);
 
-  // Shut down the queue before resolving promise.
-  queue->BeginShutdown();
-  queue->AwaitShutdownAndIdle();
+  EXPECT_EQ(ranChain, 0);
 
   // Resolving the promise should not trigger assertions.
   promise->Resolve(42, __func__);
 
-  // Spin the event loop to ensure the chained callback is never executed.
+  EXPECT_EQ(ranChain, 0);
+
+  // Spin the event loop to ensure the chained callback is executed.
   NS_ProcessPendingEvents(nullptr);
+
+  EXPECT_EQ(ranChain, 1);
+}
+
+TEST(MozPromise, TargetShutdownAbandon)
+{
+  // NOTE: There are no assertions in this test, this test is instead just
+  // ensuring that we don't hit an assertion failure while executing the test.
+  AutoTaskQueue atq;
+  RefPtr<TaskQueue> queue = atq.Queue();
+
+  int ranFirst = 0;
+  int ranChain = 0;
+
+  RefPtr promise = MakeRefPtr<TestPromise::Private>(__func__);
+  promise
+      ->Then(queue, __func__,
+             [&](auto&& aValue) -> RefPtr<TestPromise> {
+               EXPECT_TRUE(aValue.IsReject());
+               EXPECT_TRUE(std::isnan(aValue.RejectValue()));
+               ++ranFirst;
+               return TestPromise::CreateAndResolve(10, __func__);
+             })
+      ->Then(GetCurrentSerialEventTarget(), __func__, [&](auto&& aValue) {
+        EXPECT_TRUE(aValue.IsResolve());
+        EXPECT_EQ(aValue.ResolveValue(), 10);
+        ++ranChain;
+      });
+
+  EXPECT_EQ(ranFirst, 0);
+  EXPECT_EQ(ranChain, 0);
+
+  queue->BeginShutdown();
+  queue->AwaitShutdownAndIdle();
+
+  EXPECT_EQ(ranFirst, 1);
+  EXPECT_EQ(ranChain, 0);
+
+  NS_ProcessPendingEvents(nullptr);
+
+  EXPECT_EQ(ranFirst, 1);
+  EXPECT_EQ(ranChain, 1);
+
+  // Resolving the promise should not re-fire any of the callbacks.
+  promise->Resolve(42, __func__);
+
+  NS_ProcessPendingEvents(nullptr);
+
+  EXPECT_EQ(ranFirst, 1);
+  EXPECT_EQ(ranChain, 1);
+}
+
+TEST(MozPromise, DiscardPromiseAbandon)
+{
+  bool ran_first = false;
+  bool ran_chain = false;
+  RefPtr promise = MakeRefPtr<TestPromise::Private>(__func__);
+  promise
+      ->Then(GetCurrentSerialEventTarget(), __func__,
+             [&](auto&& aValue) {
+               // When the promise is dropped, the immediate ->Then should be
+               // cancelled.
+               EXPECT_TRUE(aValue.IsReject());
+               EXPECT_TRUE(std::isnan(aValue.RejectValue()));
+               EXPECT_FALSE(ran_first);
+               EXPECT_FALSE(ran_chain);
+               ran_first = true;
+               return TestPromise::CreateAndResolve(10, __func__);
+             })
+      ->Then(GetCurrentSerialEventTarget(), __func__, [&](auto&& aValue) {
+        // Chained promises should continue as normal.
+        EXPECT_TRUE(aValue.IsResolve());
+        EXPECT_EQ(aValue.ResolveValue(), 10);
+        EXPECT_TRUE(ran_first);
+        EXPECT_FALSE(ran_chain);
+        ran_chain = true;
+      });
+
+  EXPECT_FALSE(ran_first);
+  EXPECT_FALSE(ran_chain);
+
+  NS_ProcessPendingEvents(nullptr);
+
+  EXPECT_FALSE(ran_first);
+  EXPECT_FALSE(ran_chain);
+
+  promise = nullptr;
+
+  EXPECT_FALSE(ran_first);
+  EXPECT_FALSE(ran_chain);
+
+  NS_ProcessPendingEvents(nullptr);
+
+  EXPECT_TRUE(ran_first);
+  EXPECT_TRUE(ran_chain);
+}
+
+TEST(MozPromise, DiscardPromiseAbandonChain)
+{
+  bool ran = false;
+  RefPtr promise = MakeRefPtr<TestPromise::Private>(__func__);
+  RefPtr chainedPromise = MakeRefPtr<TestPromise::Private>(__func__);
+
+  chainedPromise->Then(GetCurrentSerialEventTarget(), __func__,
+                       [&](auto&& aValue) {
+                         EXPECT_TRUE(aValue.IsReject());
+                         EXPECT_TRUE(std::isnan(aValue.RejectValue()));
+                         EXPECT_FALSE(ran);
+                         ran = true;
+                       });
+
+  promise->ChainTo(do_AddRef(chainedPromise), __func__);
+  NS_ProcessPendingEvents(nullptr);
+
+  EXPECT_FALSE(ran);
+
+  promise = nullptr;
+
+  EXPECT_FALSE(ran);
+
+  NS_ProcessPendingEvents(nullptr);
+
+  EXPECT_TRUE(ran);
 }
 
 TEST(MozPromise, Map)
@@ -919,7 +1059,7 @@ TEST(MozPromise, Map)
       ->MapErr(GetCurrentSerialEventTarget(), "test",
                [&](double val) {
                  ran_err = true;
-                 return Ok{};
+                 return NS_ERROR_FAILURE;
                })
       ->Map(GetCurrentSerialEventTarget(), "test", [&](int val) {
         value = val;
@@ -945,10 +1085,10 @@ TEST(MozPromise, MapErr)
               return 1;
             })
       ->MapErr(GetCurrentSerialEventTarget(), "test",
-               [](double val) { return val * 2; })
+               [](double val) -> DoubleError { return val * 2; })
       ->MapErr(GetCurrentSerialEventTarget(), "test", [&](double val) {
         result = val;
-        return Ok{};
+        return NS_ERROR_FAILURE;
       });
 
   NS_ProcessPendingEvents(nullptr);

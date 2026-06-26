@@ -8,6 +8,7 @@
 #include <cstdarg>
 
 #include "mozilla/Attributes.h"
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "nsCOMPtr.h"
 #include "nsISupports.h"
@@ -34,6 +35,9 @@ class CollectorLogAnalyzer final : public nsISupports, public nsWrapperCache {
  public:
   class LogError {
    public:
+    explicit LogError(PromiseAbandoned)
+        : LogError(NS_ERROR_MOZPROMISE_ABANDONED, "Promise abandoned") {}
+
     LogError(nsresult aErrorCode, const nsCString& aMsg)
         : mCode(aErrorCode), mMessage(aMsg) {}
 

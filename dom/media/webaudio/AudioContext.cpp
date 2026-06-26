@@ -1075,7 +1075,7 @@ void AudioContext::SuspendInternal(void* aPromise,
             [self = RefPtr(this), aPromise](AudioContextState aNewState) {
               self->OnStateChanged(aPromise, aNewState);
             },
-            [] { MOZ_CRASH("Unexpected rejection"); });
+            [] { NS_WARNING("ApplyAudioContextOperation rejected"); });
   }
 }
 

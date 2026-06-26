@@ -9,6 +9,7 @@
 #include "js/RootingAPI.h"
 #include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/DOMEventTargetHelper.h"
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/UseCounter.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/MediaDeviceInfoBinding.h"
@@ -25,8 +26,6 @@ class LocalMediaDevice;
 class MediaDevice;
 class MediaMgrError;
 class DOMMediaStream;
-template <typename ResolveValueT, typename RejectValueT, bool IsExclusive>
-class MozPromise;
 
 namespace media {
 template <typename T>

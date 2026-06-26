@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 
+#include "mozilla/MozPromiseFwd.h"
 #include "mozilla/dom/quota/CommonMetadataArrayFwd.h"
 #include "mozilla/dom/quota/Config.h"
 #include "nsStringFwd.h"
@@ -37,9 +38,6 @@ template <typename V, typename E>
 class Result;
 
 using OkOrErr = Result<Ok, QMResult>;
-
-template <typename ResolveValueT, typename RejectValueT, bool IsExclusive>
-class MozPromise;
 
 using BoolPromise = MozPromise<bool, nsresult, false>;
 using Int64Promise = MozPromise<int64_t, nsresult, false>;

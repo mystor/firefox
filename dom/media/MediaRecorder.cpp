@@ -99,27 +99,28 @@ class MediaRecorderReporter final : public nsIMemoryReporter {
     nsCOMPtr<nsIHandleReportCallback> handleReport = aHandleReport;
     nsCOMPtr<nsISupports> data = aData;
     MediaRecorder::SizeOfPromise::All(GetCurrentSerialEventTarget(), promises)
-        ->Then(
-            GetCurrentSerialEventTarget(), __func__,
-            [handleReport, data](const nsTArray<size_t>& sizes) {
-              nsCOMPtr<nsIMemoryReporterManager> manager =
-                  do_GetService("@mozilla.org/memory-reporter-manager;1");
-              if (!manager) {
-                return;
-              }
+        ->Then(GetCurrentSerialEventTarget(), __func__,
+               [handleReport, data](const auto& aValue) {
+                 nsCOMPtr<nsIMemoryReporterManager> manager =
+                     do_GetService("@mozilla.org/memory-reporter-manager;1");
+                 if (!manager) {
+                   return;
+                 }
 
-              size_t sum = 0;
-              for (const size_t& size : sizes) {
-                sum += size;
-              }
+                 if (aValue.IsResolve()) {
+                   size_t sum = 0;
+                   for (const size_t& size : aValue.ResolveValue()) {
+                     sum += size;
+                   }
 
-              handleReport->Callback(""_ns, "explicit/media/recorder"_ns,
-                                     KIND_HEAP, UNITS_BYTES, sum,
-                                     "Memory used by media recorder."_ns, data);
+                   handleReport->Callback(""_ns, "explicit/media/recorder"_ns,
+                                          KIND_HEAP, UNITS_BYTES, sum,
+                                          "Memory used by media recorder."_ns,
+                                          data);
+                 }
 
-              manager->EndReport();
-            },
-            [](size_t) { MOZ_CRASH("Unexpected reject"); });
+                 manager->EndReport();
+               });
 
     return NS_OK;
   }
@@ -1320,25 +1321,17 @@ class MediaRecorder::Session : public PrincipalChangeObserver<MediaStreamTrack>,
     // Break the cycle reference between Session and MediaRecorder.
     mShutdownPromise = mShutdownPromise->Then(
         GetMainThreadSerialEventTarget(), __func__,
-        [self = RefPtr<Session>(this)]() {
+        [self = RefPtr<Session>(this)] {
           self->mRecorder->RemoveSession(self);
           return ShutdownPromise::CreateAndResolve(true, __func__);
-        },
-        []() {
-          MOZ_ASSERT_UNREACHABLE("Unexpected reject");
-          return ShutdownPromise::CreateAndReject(false, __func__);
         });
 
     if (mEncoderThread) {
-      mShutdownPromise = mShutdownPromise->Then(
-          GetMainThreadSerialEventTarget(), __func__,
-          [encoderThread = mEncoderThread]() {
-            return encoderThread->BeginShutdown();
-          },
-          []() {
-            MOZ_ASSERT_UNREACHABLE("Unexpected reject");
-            return ShutdownPromise::CreateAndReject(false, __func__);
-          });
+      mShutdownPromise =
+          mShutdownPromise->Then(GetMainThreadSerialEventTarget(), __func__,
+                                 [encoderThread = mEncoderThread] {
+                                   return encoderThread->BeginShutdown();
+                                 });
     }
 
     return mShutdownPromise;
@@ -2112,7 +2105,9 @@ RefPtr<MediaRecorder::SizeOfPromise> MediaRecorder::SizeOfExcludingThis(
             }
             holder->Resolve(total, __func__);
           },
-          []() { MOZ_CRASH("Unexpected reject"); });
+          [holder](PromiseAbandoned) {
+            holder->Reject(PromiseAbandoned{}, __func__);
+          });
 
   return promise;
 }

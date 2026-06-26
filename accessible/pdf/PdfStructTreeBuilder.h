@@ -73,7 +73,7 @@ class PdfStructTreeBuilder {
     static constexpr uint64_t PageFooter = 2;
   };
 
-  using ReadyPromise = MozPromise<Ok, Ok, true>;
+  using ReadyPromise = MozPromise<Ok, PromiseAbandoned, true>;
   /**
    * Return a promise which is resolved when this builder is ready.
    * BuildStructTree should not be called before this promise resolves.
