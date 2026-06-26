@@ -171,6 +171,61 @@ class MozPromiseBase : public MozPromiseRefcountable {
   virtual void AssertIsDead() = 0;
 };
 
+template <typename ResolveValueT, typename RejectValueT>
+class MozPromiseValue {
+ public:
+  using ResolveValueType = ResolveValueT;
+  using RejectValueType = RejectValueT;
+
+  template <typename ResolveValueType_>
+  void SetResolve(ResolveValueType_&& aResolveValue) {
+    MOZ_ASSERT(IsNothing());
+    mValue = Storage(VariantIndex<ResolveIndex>{},
+                     std::forward<ResolveValueType_>(aResolveValue));
+  }
+
+  template <typename RejectValueType_>
+  void SetReject(RejectValueType_&& aRejectValue) {
+    MOZ_ASSERT(IsNothing());
+    mValue = Storage(VariantIndex<RejectIndex>{},
+                     std::forward<RejectValueType_>(aRejectValue));
+  }
+
+  template <typename ResolveValueType_>
+  static MozPromiseValue MakeResolve(ResolveValueType_&& aResolveValue) {
+    MozPromiseValue val;
+    val.SetResolve(std::forward<ResolveValueType_>(aResolveValue));
+    return val;
+  }
+
+  template <typename RejectValueType_>
+  static MozPromiseValue MakeReject(RejectValueType_&& aRejectValue) {
+    MozPromiseValue val;
+    val.SetReject(std::forward<RejectValueType_>(aRejectValue));
+    return val;
+  }
+
+  bool IsResolve() const { return mValue.template is<ResolveIndex>(); }
+  bool IsReject() const { return mValue.template is<RejectIndex>(); }
+  bool IsNothing() const { return mValue.template is<NothingIndex>(); }
+
+  const ResolveValueType& ResolveValue() const {
+    return mValue.template as<ResolveIndex>();
+  }
+  ResolveValueType& ResolveValue() {
+    return mValue.template as<ResolveIndex>();
+  }
+  const RejectValueType& RejectValue() const {
+    return mValue.template as<RejectIndex>();
+  }
+  RejectValueType& RejectValue() { return mValue.template as<RejectIndex>(); }
+
+ private:
+  enum { NothingIndex, ResolveIndex, RejectIndex };
+  using Storage = Variant<Nothing, ResolveValueType, RejectValueType>;
+  Storage mValue = Storage(VariantIndex<NothingIndex>{});
+};
+
 template <typename T>
 class MozPromiseHolder;
 template <typename PromiseType, typename ImplType>
@@ -194,56 +249,8 @@ class MozPromise : public MozPromiseBase {
  public:
   using ResolveValueType = ResolveValueT;
   using RejectValueType = RejectValueT;
-  class ResolveOrRejectValue {
-   public:
-    template <typename ResolveValueType_>
-    void SetResolve(ResolveValueType_&& aResolveValue) {
-      MOZ_ASSERT(IsNothing());
-      mValue = Storage(VariantIndex<ResolveIndex>{},
-                       std::forward<ResolveValueType_>(aResolveValue));
-    }
-
-    template <typename RejectValueType_>
-    void SetReject(RejectValueType_&& aRejectValue) {
-      MOZ_ASSERT(IsNothing());
-      mValue = Storage(VariantIndex<RejectIndex>{},
-                       std::forward<RejectValueType_>(aRejectValue));
-    }
-
-    template <typename ResolveValueType_>
-    static ResolveOrRejectValue MakeResolve(ResolveValueType_&& aResolveValue) {
-      ResolveOrRejectValue val;
-      val.SetResolve(std::forward<ResolveValueType_>(aResolveValue));
-      return val;
-    }
-
-    template <typename RejectValueType_>
-    static ResolveOrRejectValue MakeReject(RejectValueType_&& aRejectValue) {
-      ResolveOrRejectValue val;
-      val.SetReject(std::forward<RejectValueType_>(aRejectValue));
-      return val;
-    }
-
-    bool IsResolve() const { return mValue.template is<ResolveIndex>(); }
-    bool IsReject() const { return mValue.template is<RejectIndex>(); }
-    bool IsNothing() const { return mValue.template is<NothingIndex>(); }
-
-    const ResolveValueType& ResolveValue() const {
-      return mValue.template as<ResolveIndex>();
-    }
-    ResolveValueType& ResolveValue() {
-      return mValue.template as<ResolveIndex>();
-    }
-    const RejectValueType& RejectValue() const {
-      return mValue.template as<RejectIndex>();
-    }
-    RejectValueType& RejectValue() { return mValue.template as<RejectIndex>(); }
-
-   private:
-    enum { NothingIndex, ResolveIndex, RejectIndex };
-    using Storage = Variant<Nothing, ResolveValueType, RejectValueType>;
-    Storage mValue = Storage(VariantIndex<NothingIndex>{});
-  };
+  using ResolveOrRejectValue =
+      MozPromiseValue<ResolveValueType, RejectValueType>;
 
  protected:
   // MozPromise is the public type, and never constructed directly. Construct
