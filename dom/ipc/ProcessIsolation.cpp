@@ -70,6 +70,10 @@ enum class WebContentIsolationStrategy : uint32_t {
   // `highValue*` permission by the permission manager, which is done in
   // response to certain actions.
   IsolateHighValue = 2,
+  // Web content is isolated by default. Sites which are considered "low value"
+  // are not isolated. A site is considered "low value" if it has not been
+  // granted a `highValue*` permission, and is on a specific domain list.
+  IsolateNonLowValue = 3,
 };
 
 /**
@@ -120,6 +124,7 @@ struct CommaSeparatedPref {
 
 CommaSeparatedPref sSeparatedMozillaDomains{
     "browser.tabs.remote.separatedMozillaDomains"_ns};
+CommaSeparatedPref sLowValueDomains{"browser.tabs.remote.lowValueDomains"_ns};
 
 bool AllowJITForSiteOrigin(nsIURI* aSiteOriginURI,
                            WindowGlobalParent* aParentWindow) {
@@ -454,11 +459,47 @@ static bool ShouldCrossOriginIsolate(nsIChannel* aChannel,
 }
 
 /**
+ * Returns `true` if this principal is considered "high value".
+ */
+static bool HasHighValuePermission(nsIPrincipal* aPrincipal) {
+  RefPtr<PermissionManager> perms = PermissionManager::GetInstance();
+  if (NS_WARN_IF(!perms)) {
+    // If we somehow have no permission manager, fall back to the safest
+    // option, and try to isolate.
+    MOZ_ASSERT_UNREACHABLE("Permission manager is missing");
+    return true;
+  }
+
+  static constexpr nsLiteralCString kHighValuePermissions[] = {
+      mozilla::dom::kHighValueCOOPPermission,
+      mozilla::dom::kHighValueHasSavedLoginPermission,
+      mozilla::dom::kHighValueIsLoggedInPermission,
+  };
+
+  for (const auto& type : kHighValuePermissions) {
+    uint32_t permission = nsIPermissionManager::UNKNOWN_ACTION;
+    if (NS_SUCCEEDED(perms->TestPermissionFromPrincipal(aPrincipal, type,
+                                                        &permission)) &&
+        permission == nsIPermissionManager::ALLOW_ACTION) {
+      MOZ_LOG(gProcessIsolationLog, LogLevel::Verbose,
+              ("Isolating '%s' due to high-value permission '%s'",
+               OriginString(aPrincipal).get(), type.get()));
+      return true;
+    }
+  }
+  MOZ_LOG(gProcessIsolationLog, LogLevel::Verbose,
+          ("Not isolating '%s' as it is not high-value",
+           OriginString(aPrincipal).get()));
+  return false;
+}
+
+/**
  * Returns `true` if loads for this site should be isolated on a per-site basis.
  * If `aTopBC` is nullptr, this is being called to check if a shared or service
  * worker should be isolated.
  */
-static bool ShouldIsolateSite(nsIPrincipal* aPrincipal,
+static bool ShouldIsolateSite(nsIPrincipal* aPrincipal, nsIURI* aSiteOriginURI,
+                              WindowGlobalParent* aParentWindow,
                               bool aUseRemoteSubframes) {
   // If Fission is disabled, we never want to isolate. We check the toplevel BC
   // if it's available, or the global pref if checking for shared or service
@@ -486,35 +527,31 @@ static bool ShouldIsolateSite(nsIPrincipal* aPrincipal,
                OriginString(aPrincipal).get()));
       return true;
     case WebContentIsolationStrategy::IsolateHighValue: {
-      RefPtr<PermissionManager> perms = PermissionManager::GetInstance();
-      if (NS_WARN_IF(!perms)) {
-        // If we somehow have no permission manager, fall back to the safest
-        // option, and try to isolate.
-        MOZ_ASSERT_UNREACHABLE("Permission manager is missing");
+      return HasHighValuePermission(aPrincipal);
+    }
+    case WebContentIsolationStrategy::IsolateNonLowValue: {
+      if (!aParentWindow) {
+        MOZ_LOG(gProcessIsolationLog, LogLevel::Verbose,
+                ("Isolating '%s' as a toplevel navigation",
+                 OriginString(aPrincipal).get()));
         return true;
       }
 
-      static constexpr nsLiteralCString kHighValuePermissions[] = {
-          mozilla::dom::kHighValueCOOPPermission,
-          mozilla::dom::kHighValueHasSavedLoginPermission,
-          mozilla::dom::kHighValueIsLoggedInPermission,
-      };
+      if (aSiteOriginURI->SchemeIs("https")) {
+        nsAutoCString host;
+        MOZ_ALWAYS_SUCCEEDS(aSiteOriginURI->GetAsciiHost(host));
 
-      for (const auto& type : kHighValuePermissions) {
-        uint32_t permission = nsIPermissionManager::UNKNOWN_ACTION;
-        if (NS_SUCCEEDED(perms->TestPermissionFromPrincipal(aPrincipal, type,
-                                                            &permission)) &&
-            permission == nsIPermissionManager::ALLOW_ACTION) {
-          MOZ_LOG(gProcessIsolationLog, LogLevel::Verbose,
-                  ("Isolating '%s' due to high-value permission '%s'",
-                   OriginString(aPrincipal).get(), type.get()));
-          return true;
+        for (const auto& domain : sLowValueDomains) {
+          if (host == domain) {
+            return HasHighValuePermission(aPrincipal);
+          }
         }
       }
+
       MOZ_LOG(gProcessIsolationLog, LogLevel::Verbose,
-              ("Not isolating '%s' as it is not high-value",
+              ("Isolating '%s' as it is not low-value",
                OriginString(aPrincipal).get()));
-      return false;
+      return true;
     }
     default:
       // An invalid pref value was used. Fall back to the safest option and
@@ -994,7 +1031,8 @@ Result<NavigationIsolationOptions, nsresult> IsolationOptionsForNavigation(
   }
 
   if (options.mShouldCrossOriginIsolate ||
-      ShouldIsolateSite(resultOrPrecursor, aTopBC->UseRemoteSubframes())) {
+      ShouldIsolateSite(resultOrPrecursor, siteOriginURI, aParentWindow,
+                        aTopBC->UseRemoteSubframes())) {
     options.mRemoteType = options.mRemoteType.WithSiteOrigin(
         siteOriginNoSuffix, options.mShouldCrossOriginIsolate
                                 ? RemoteType::Kind::WebCoopCoep
@@ -1189,7 +1227,8 @@ Result<WorkerIsolationOptions, nsresult> IsolationOptionsForWorker(
 
   // If we should be isolating this site, we can determine the correct fission
   // remote type from the principal's site-origin.
-  if (ShouldIsolateSite(resultOrPrecursor, aUseRemoteSubframes)) {
+  if (ShouldIsolateSite(resultOrPrecursor, siteOriginURI, nullptr,
+                        aUseRemoteSubframes)) {
     options.mRemoteType = options.mRemoteType.WithSiteOrigin(
         siteOriginNoSuffix, aWorkerKind == WorkerKindService
                                 ? RemoteType::Kind::WebServiceWorker
@@ -1407,7 +1446,8 @@ Result<RemoteType, nsresult> PredictRemoteTypeForURI(
     }
   }
 
-  if (ShouldIsolateSite(principal, aUseRemoteSubframes)) {
+  if (ShouldIsolateSite(principal, siteOriginURI, nullptr,
+                        aUseRemoteSubframes)) {
     remoteType = remoteType.WithSiteOrigin(siteOriginNoSuffix);
   }
 
@@ -1486,11 +1526,20 @@ void AddHighValuePermission(const nsACString& aOrigin,
   AddHighValuePermission(principal, aPermissionType);
 }
 
-bool IsIsolateHighValueSiteEnabled() {
-  return mozilla::FissionAutostart() &&
-         WebContentIsolationStrategy(
-             StaticPrefs::fission_webContentIsolationStrategy()) ==
-             WebContentIsolationStrategy::IsolateHighValue;
+bool IsHighValueSiteRecordingEnabled() {
+  if (!FissionAutostart()) {
+    return false;
+  }
+
+  switch (WebContentIsolationStrategy(
+      StaticPrefs::fission_webContentIsolationStrategy())) {
+    case WebContentIsolationStrategy::IsolateHighValue:
+    case WebContentIsolationStrategy::IsolateNonLowValue:
+      return true;
+
+    default:
+      return false;
+  }
 }
 
 bool ValidatePrincipalCouldPotentiallyBeLoadedBy(

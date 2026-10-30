@@ -124,10 +124,11 @@ void AddHighValuePermission(const nsACString& aOrigin,
                             const nsACString& aPermissionType);
 
 /**
- * Returns true when fission is enabled and the
- * `fission.webContentIsolationStrategy` pref is set to `IsolateHighValue`.
+ * Returns true when the current `fission.webContentIsolationStrategy` cares
+ * about the status of "high value" permissions, and collection should be
+ * enabled.
  */
-bool IsIsolateHighValueSiteEnabled();
+bool IsHighValueSiteRecordingEnabled();
 
 /**
  * Options for ValidatePrincipal methods. By default:

@@ -47,7 +47,7 @@ LoginDetectionService::LoginDetectionService() : mIsLoginsLoaded(false) {}
 LoginDetectionService::~LoginDetectionService() { UnregisterObserver(); }
 
 void LoginDetectionService::MaybeStartMonitoring() {
-  if (IsIsolateHighValueSiteEnabled()) {
+  if (IsHighValueSiteRecordingEnabled()) {
     // We want to isolate sites with a saved password, so fetch saved logins
     // from the password manager, and then add the 'HighValue' permission.
 
@@ -59,7 +59,7 @@ void LoginDetectionService::MaybeStartMonitoring() {
     FetchLogins();
   }
 
-  if (IsIsolateHighValueSiteEnabled() ||
+  if (IsHighValueSiteRecordingEnabled() ||
       StaticPrefs::fission_highValue_login_monitor()) {
     // When the pref is on, we monitor users' login attempt event when we
     // are not isolating high value sites. This is because We can't detect the
@@ -110,7 +110,7 @@ NS_IMETHODIMP LoginDetectionService::Init() {
 }
 
 NS_IMETHODIMP LoginDetectionService::IsLoginsLoaded(bool* aResult) {
-  if (IsIsolateHighValueSiteEnabled()) {
+  if (IsHighValueSiteRecordingEnabled()) {
     *aResult = mIsLoginsLoaded;
   } else {
     // When the feature is disabled, just returns true so testcases don't

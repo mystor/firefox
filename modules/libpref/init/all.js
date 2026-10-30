@@ -1894,6 +1894,10 @@ pref("browser.tabs.remote.separatePrivilegedContentProcess", false);
 // full domains: any subdomains of the domains listed will also be allowed.
 pref("browser.tabs.remote.separatedMozillaDomains", "addons.mozilla.org,accounts.firefox.com");
 
+// Domains which are considered "low-value" and should not be isolated.
+// Comma-separated full eTLD+1s.
+pref("browser.tabs.remote.lowValueDomains", "1rx.io,33across.com,360yield.com,3lift.com,4dex.io,a-mo.net,adform.net,adgrx.com,adition.com,adkernel.com,admaster.cc,admatic.de,adnxs.com,adswizz.com,adtarget.biz,adtarget.com.tr,advangelists.com,amx1.net,aniview.com,bfmio.com,blismedia.com,casalemedia.com,cognitivlabs.com,connectad.io,cootlogix.com,copper6.com,ctnsnet.com,dotomi.com,eskimi.com,everesttech.net,ex.co,exco-pb.com,fsrv.io,fwmrm.net,gumgum.com,impactify.media,ingage.tech,inmobi.com,iprom.net,kargo.com,kueezrtb.com,marphezis.com,media.net,mediago.io,minutemedia-prebid.com,mobilefuse.com,modoro360.com,monetixads.com,omnitagjs.com,onetag-sys.com,openwebmp.com,ottadvisors.com,outbrain.com,pixad.com.tr,postrelease.com,presage.io,programmaticx.ai,quantserve.com,richaudience.com,rubiconproject.com,servenobid.com,sharethrough.com,smartadserver.com,smilewanted.com,sonobi.com,sparteo.com,startappnetwork.com,stickyadstv.com,syncingbridge.com,tappx.com,technoratimedia.com,the-ozone-project.com,tracookiepixel.xyz,turn.com,undertone.com,unrulymedia.com,vistarsagency.com,vrtcal.com,yellowblue.io,yieldmo.com");
+
 // Default font types and sizes by locale
 pref("font.default.ar", "sans-serif");
 pref("font.minimum-size.ar", 0);

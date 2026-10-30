@@ -1430,6 +1430,7 @@ export class SpecialPowersChild extends JSWindowActorChild {
     IsolateNothing: 0,
     IsolateEverything: 1,
     IsolateHighValue: 2,
+    IsolateNonLowValue: 3,
   };
 
   effectiveIsolationStrategy() {
